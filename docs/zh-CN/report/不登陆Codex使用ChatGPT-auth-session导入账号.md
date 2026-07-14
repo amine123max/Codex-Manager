@@ -60,6 +60,39 @@
 
 实际复制时不需要手动改字段名，直接粘贴 `https://chatgpt.com/api/auth/session` 页面返回的完整 JSON 即可。
 
+还支持以下常见导入格式：
+
+- 每行一个原始 `accessToken`。
+- `token`、`tokens.*`、`credentials.*`、`auth.*` 中的 token 字段。
+- ChatGPT session 的 `user.id`、`user.email`、`account.id` 嵌套结构。
+- sub2api 导出的 `sub2api-data` / `sub2api-bundle` 文件，其中账号位于 `accounts[].credentials`。
+- BugTeam 这类只有 `access_token`、没有 `refresh_token` 的账号。
+
+sub2api 数据包示例：
+
+```json
+{
+  "type": "sub2api-data",
+  "version": 1,
+  "exported_at": "2026-07-14T00:00:00Z",
+  "proxies": [],
+  "accounts": [
+    {
+      "name": "BugTeam Account",
+      "platform": "openai",
+      "type": "oauth",
+      "credentials": {
+        "access_token": "eyJ...",
+        "chatgpt_account_id": "acct_...",
+        "chatgpt_user_id": "user_..."
+      }
+    }
+  ]
+}
+```
+
+没有 `refresh_token` 时仍可正常导入和使用当前 access token。软件会优先使用账号/用户标识建立账号身份；缺少这些标识时，会使用 access token 指纹避免重复导入同一 token。
+
 ## 常见问题
 
 ### 打开页面不是 JSON

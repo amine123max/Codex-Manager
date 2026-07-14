@@ -1,5 +1,5 @@
 use super::{
-    extract_token_payload, import_account_auth_json, import_single_item,
+    extract_token_payload, import_account_auth_json, import_single_item, parse_items_from_content,
     resolve_logical_account_id, ExistingAccountIndex, ImportTokenPayload,
 };
 use crate::account_identity::build_account_storage_id;
@@ -54,6 +54,7 @@ fn payload() -> ImportTokenPayload {
         refresh_token: "refresh".to_string(),
         account_id_hint: None,
         chatgpt_account_id_hint: None,
+        user_id_hint: None,
     }
 }
 
@@ -240,6 +241,114 @@ fn extract_token_payload_supports_camel_case_fields() {
         payload.chatgpt_account_id_hint.as_deref(),
         Some("cgpt-camel")
     );
+}
+
+#[test]
+fn parse_items_supports_sub2api_data_exports() {
+    let values = parse_items_from_content(
+        &json!({
+            "type": "sub2api-data",
+            "version": 1,
+            "exported_at": "2026-07-14T00:00:00Z",
+            "proxies": [],
+            "accounts": [
+                {
+                    "name": "BugTeam A",
+                    "platform": "openai",
+                    "type": "oauth",
+                    "credentials": {
+                        "access_token": "access.bugteam.a",
+                        "chatgpt_account_id": "team-a",
+                        "chatgpt_user_id": "user-a"
+                    }
+                },
+                [{
+                    "name": "BugTeam B",
+                    "platform": "openai",
+                    "type": "oauth",
+                    "credentials": {
+                        "access_token": "access.bugteam.b",
+                        "refresh_token": "refresh.b"
+                    }
+                }]
+            ]
+        })
+        .to_string(),
+    )
+    .expect("parse sub2api export");
+
+    assert_eq!(values.len(), 2);
+    assert_eq!(
+        values[0].get("name").and_then(|value| value.as_str()),
+        Some("BugTeam A")
+    );
+    assert_eq!(
+        values[1].get("name").and_then(|value| value.as_str()),
+        Some("BugTeam B")
+    );
+}
+
+#[test]
+fn parse_items_supports_raw_tokens_and_mixed_lines() {
+    let values = parse_items_from_content(
+        "raw-access-token\n{\"token\":\"json-access-token\"}\n[[\"nested-access-token\"]]",
+    )
+    .expect("parse mixed content");
+
+    assert_eq!(values.len(), 3);
+    assert_eq!(values[0].as_str(), Some("raw-access-token"));
+    assert_eq!(
+        values[1].get("token").and_then(|value| value.as_str()),
+        Some("json-access-token")
+    );
+    assert_eq!(values[2].as_str(), Some("nested-access-token"));
+}
+
+#[test]
+fn extract_token_payload_supports_sub2api_credentials_and_session_identity() {
+    let exported = json!({
+        "name": "BugTeam Account",
+        "notes": "from sub2api",
+        "platform": "openai",
+        "type": "oauth",
+        "credentials": {
+            "access_token": "access.sub2api",
+            "id_token": "id.sub2api",
+            "chatgpt_account_id": "team-sub2api",
+            "chatgpt_user_id": "user-sub2api",
+            "email": "sub2api@example.com"
+        }
+    });
+
+    let payload = extract_token_payload(&exported).expect("parse sub2api credentials");
+    assert_eq!(payload.access_token, "access.sub2api");
+    assert_eq!(payload.id_token, "id.sub2api");
+    assert_eq!(payload.refresh_token, "");
+    assert_eq!(
+        payload.chatgpt_account_id_hint.as_deref(),
+        Some("team-sub2api")
+    );
+    assert_eq!(payload.user_id_hint.as_deref(), Some("user-sub2api"));
+
+    let session = json!({
+        "user": {
+            "id": "session-user",
+            "name": "Session User",
+            "email": "session@example.com"
+        },
+        "account": {
+            "id": "session-team",
+            "planType": "team"
+        },
+        "accessToken": "access.session"
+    });
+    let payload = extract_token_payload(&session).expect("parse session payload");
+    assert_eq!(payload.access_token, "access.session");
+    assert_eq!(
+        payload.chatgpt_account_id_hint.as_deref(),
+        Some("session-team")
+    );
+    assert_eq!(payload.user_id_hint.as_deref(), Some("session-user"));
 }
 
 /// 函数 `extract_token_payload_allows_missing_id_and_refresh_tokens`
@@ -716,6 +825,89 @@ fn import_single_item_allows_missing_id_and_refresh_tokens() {
     assert_eq!(token.refresh_token, "");
 }
 
+#[test]
+fn import_single_item_supports_bugteam_access_token_only_account() {
+    let storage = Storage::open_in_memory().expect("open in memory");
+    storage.init().expect("init");
+    let mut idx = ExistingAccountIndex::build(&storage).expect("build index");
+    let item = json!({
+        "name": "BugTeam Access Only",
+        "platform": "openai",
+        "type": "oauth",
+        "credentials": {
+            "access_token": "opaque-bugteam-access-token",
+            "chatgpt_account_id": "bugteam-workspace",
+            "chatgpt_user_id": "bugteam-user"
+        }
+    });
+
+    let created = import_single_item(&storage, &mut idx, &item, 1).expect("import bugteam");
+    assert!(created);
+
+    let accounts = storage.list_accounts().expect("list accounts");
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].label, "BugTeam Access Only");
+    assert_eq!(
+        accounts[0].chatgpt_account_id.as_deref(),
+        Some("bugteam-workspace")
+    );
+    let token = storage
+        .find_token_by_account_id(&accounts[0].id)
+        .expect("find token")
+        .expect("token");
+    assert_eq!(token.access_token, "opaque-bugteam-access-token");
+    assert_eq!(token.refresh_token, "");
+}
+
+#[test]
+fn import_single_item_raw_access_token_uses_stable_fingerprint_identity() {
+    let storage = Storage::open_in_memory().expect("open in memory");
+    storage.init().expect("init");
+    let mut idx = ExistingAccountIndex::build(&storage).expect("build index");
+    let item = json!("opaque-raw-access-token");
+
+    assert!(import_single_item(&storage, &mut idx, &item, 1).expect("first import"));
+    assert!(!import_single_item(&storage, &mut idx, &item, 2).expect("second import"));
+
+    let accounts = storage.list_accounts().expect("list accounts");
+    assert_eq!(accounts.len(), 1);
+    assert!(accounts[0].id.starts_with("import-access-"));
+}
+
+#[test]
+fn import_single_item_access_only_update_preserves_existing_refresh_token() {
+    let storage = Storage::open_in_memory().expect("open in memory");
+    storage.init().expect("init");
+    let mut idx = ExistingAccountIndex::build(&storage).expect("build index");
+    let with_refresh = json!({
+        "credentials": {
+            "access_token": "access.old",
+            "refresh_token": "refresh.keep",
+            "chatgpt_account_id": "team-preserve",
+            "chatgpt_user_id": "user-preserve"
+        }
+    });
+    let access_only = json!({
+        "credentials": {
+            "access_token": "access.new",
+            "chatgpt_account_id": "team-preserve",
+            "chatgpt_user_id": "user-preserve"
+        }
+    });
+
+    assert!(import_single_item(&storage, &mut idx, &with_refresh, 1).expect("initial import"));
+    assert!(!import_single_item(&storage, &mut idx, &access_only, 2).expect("access-only update"));
+
+    let accounts = storage.list_accounts().expect("list accounts");
+    assert_eq!(accounts.len(), 1);
+    let token = storage
+        .find_token_by_account_id(&accounts[0].id)
+        .expect("find token")
+        .expect("token");
+    assert_eq!(token.access_token, "access.new");
+    assert_eq!(token.refresh_token, "refresh.keep");
+}
+
 /// 函数 `import_account_auth_json_keeps_valid_items_when_one_content_is_invalid`
 ///
 /// 作者: gaohongshun
@@ -748,7 +940,7 @@ fn import_account_auth_json_keeps_valid_items_when_one_content_is_invalid() {
             "refresh_token": "refresh.valid"
         })
         .to_string(),
-        "not-json".to_string(),
+        "{\"accessToken\":".to_string(),
     ])
     .expect("import account auth json");
 
