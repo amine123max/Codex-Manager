@@ -62,8 +62,60 @@ pub async fn service_quota_capacity_config(
 }
 
 #[tauri::command]
-pub async fn service_quota_billing_rules(addr: Option<String>) -> Result<serde_json::Value, String> {
+pub async fn service_quota_billing_rules(
+    addr: Option<String>,
+) -> Result<serde_json::Value, String> {
     rpc_call_in_background("quota/billingRules", addr, None).await
+}
+
+#[tauri::command]
+pub async fn service_quota_model_price_rules(
+    addr: Option<String>,
+) -> Result<serde_json::Value, String> {
+    rpc_call_in_background("quota/modelPriceRules", addr, None).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn service_quota_model_price_rule_upsert(
+    addr: Option<String>,
+    id: Option<String>,
+    provider: String,
+    model_pattern: String,
+    match_type: String,
+    input_price_per_1m: Option<f64>,
+    cached_input_price_per_1m: Option<f64>,
+    output_price_per_1m: Option<f64>,
+    reasoning_output_price_per_1m: Option<f64>,
+    enabled: bool,
+    priority: i64,
+) -> Result<serde_json::Value, String> {
+    rpc_call_in_background(
+        "quota/modelPriceRule/upsert",
+        addr,
+        Some(serde_json::json!({
+            "id": id, "provider": provider, "modelPattern": model_pattern,
+            "matchType": match_type, "inputPricePer1m": input_price_per_1m,
+            "cachedInputPricePer1m": cached_input_price_per_1m,
+            "outputPricePer1m": output_price_per_1m,
+            "reasoningOutputPricePer1m": reasoning_output_price_per_1m,
+            "enabled": enabled, "priority": priority,
+        })),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn service_quota_model_price_rule_delete(
+    addr: Option<String>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    rpc_call_in_background(
+        "quota/modelPriceRule/delete",
+        addr,
+        Some(serde_json::json!({ "id": id })),
+    )
+    .await
 }
 
 #[tauri::command]

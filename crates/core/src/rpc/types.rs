@@ -197,6 +197,20 @@ pub struct AccountSummary {
     pub quota_capacity_primary_window_tokens: Option<i64>,
     pub quota_capacity_secondary_window_tokens: Option<i64>,
     pub quota_reset_available_count: Option<i64>,
+    #[serde(default)]
+    pub usage_request_count: i64,
+    #[serde(default)]
+    pub usage_input_tokens: i64,
+    #[serde(default)]
+    pub usage_cached_input_tokens: i64,
+    #[serde(default)]
+    pub usage_output_tokens: i64,
+    #[serde(default)]
+    pub usage_reasoning_output_tokens: i64,
+    #[serde(default)]
+    pub usage_total_tokens: i64,
+    #[serde(default)]
+    pub usage_estimated_cost_usd: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

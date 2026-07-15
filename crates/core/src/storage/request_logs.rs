@@ -201,6 +201,49 @@ impl Storage {
             )
             .err()
             .map(|err| err.to_string());
+        if token_stat_error.is_none() {
+            if let Some(account_id) = stat
+                .account_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                let input = stat.input_tokens.unwrap_or(0).max(0);
+                let cached = stat.cached_input_tokens.unwrap_or(0).max(0).min(input);
+                let output = stat.output_tokens.unwrap_or(0).max(0);
+                let reasoning = stat.reasoning_output_tokens.unwrap_or(0).max(0).min(output);
+                let total = stat
+                    .total_tokens
+                    .unwrap_or_else(|| input.saturating_sub(cached).saturating_add(output))
+                    .max(0);
+                tx.execute(
+                    "INSERT INTO account_usage_billing_stats (
+                        account_id, request_count, input_tokens, cached_input_tokens,
+                        output_tokens, reasoning_output_tokens, total_tokens,
+                        estimated_cost_usd, updated_at
+                     ) VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                     ON CONFLICT(account_id) DO UPDATE SET
+                        request_count = account_usage_billing_stats.request_count + 1,
+                        input_tokens = account_usage_billing_stats.input_tokens + excluded.input_tokens,
+                        cached_input_tokens = account_usage_billing_stats.cached_input_tokens + excluded.cached_input_tokens,
+                        output_tokens = account_usage_billing_stats.output_tokens + excluded.output_tokens,
+                        reasoning_output_tokens = account_usage_billing_stats.reasoning_output_tokens + excluded.reasoning_output_tokens,
+                        total_tokens = account_usage_billing_stats.total_tokens + excluded.total_tokens,
+                        estimated_cost_usd = account_usage_billing_stats.estimated_cost_usd + excluded.estimated_cost_usd,
+                        updated_at = excluded.updated_at",
+                    (
+                        account_id,
+                        input,
+                        cached,
+                        output,
+                        reasoning,
+                        total,
+                        stat.estimated_cost_usd.unwrap_or(0.0).max(0.0),
+                        stat.created_at,
+                    ),
+                )?;
+            }
+        }
 
         tx.commit()?;
         Ok((request_log_id, token_stat_error))

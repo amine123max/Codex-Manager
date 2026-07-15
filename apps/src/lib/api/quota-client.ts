@@ -2,6 +2,8 @@ import { invoke, withAddr } from "@/lib/api/transport";
 import type {
   BillingRule,
   BillingRuleUpsertParams,
+  ModelPriceRule,
+  ModelPriceRuleUpsertParams,
   QuotaApiKeyModelUsageItem,
   QuotaApiKeyUsageItem,
   QuotaCapacityConfigResult,
@@ -173,6 +175,23 @@ function normalizeBillingRule(payload: unknown): BillingRule {
     endsAt: toNullableNumber(source.endsAt ?? source.ends_at),
     createdAt: toNullableNumber(source.createdAt ?? source.created_at) ?? 0,
     updatedAt: toNullableNumber(source.updatedAt ?? source.updated_at) ?? 0,
+  };
+}
+
+function normalizeModelPriceRule(payload: unknown): ModelPriceRule {
+  const source = asRecord(payload);
+  return {
+    id: asString(source.id),
+    provider: asString(source.provider) || "custom",
+    modelPattern: asString(source.modelPattern ?? source.model_pattern),
+    matchType: asString(source.matchType ?? source.match_type) || "prefix",
+    inputPricePer1m: toNullableNumber(source.inputPricePer1m ?? source.input_price_per_1m),
+    cachedInputPricePer1m: toNullableNumber(source.cachedInputPricePer1m ?? source.cached_input_price_per_1m),
+    outputPricePer1m: toNullableNumber(source.outputPricePer1m ?? source.output_price_per_1m),
+    reasoningOutputPricePer1m: toNullableNumber(source.reasoningOutputPricePer1m ?? source.reasoning_output_price_per_1m),
+    source: asString(source.source),
+    enabled: asBoolean(source.enabled),
+    priority: Math.trunc(toNullableNumber(source.priority) ?? 0),
   };
 }
 
@@ -466,6 +485,35 @@ export const quotaClient = {
   async billingRules(): Promise<BillingRule[]> {
     const result = await invoke<unknown>("service_quota_billing_rules", withAddr());
     return readItems(result).map(normalizeBillingRule);
+  },
+  async modelPriceRules(): Promise<ModelPriceRule[]> {
+    const result = await invoke<unknown>("service_quota_model_price_rules", withAddr());
+    return readItems(result).map(normalizeModelPriceRule);
+  },
+  async upsertModelPriceRule(params: ModelPriceRuleUpsertParams): Promise<ModelPriceRule[]> {
+    const result = await invoke<unknown>(
+      "service_quota_model_price_rule_upsert",
+      withAddr({
+        id: params.id ?? null,
+        provider: params.provider,
+        modelPattern: params.modelPattern,
+        matchType: params.matchType,
+        inputPricePer1m: params.inputPricePer1m,
+        cachedInputPricePer1m: params.cachedInputPricePer1m ?? null,
+        outputPricePer1m: params.outputPricePer1m,
+        reasoningOutputPricePer1m: params.reasoningOutputPricePer1m ?? null,
+        enabled: params.enabled ?? true,
+        priority: params.priority ?? 20_000,
+      }),
+    );
+    return readItems(result).map(normalizeModelPriceRule);
+  },
+  async deleteModelPriceRule(id: string): Promise<ModelPriceRule[]> {
+    const result = await invoke<unknown>(
+      "service_quota_model_price_rule_delete",
+      withAddr({ id }),
+    );
+    return readItems(result).map(normalizeModelPriceRule);
   },
   async upsertBillingRule(params: BillingRuleUpsertParams): Promise<BillingRule[]> {
     const result = await invoke<unknown>(

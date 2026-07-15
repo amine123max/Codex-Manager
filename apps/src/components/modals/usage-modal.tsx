@@ -207,6 +207,29 @@ export default function UsageModal({
 
           <Card size="sm">
             <CardHeader>
+              <CardTitle>{t("累计使用")}</CardTitle>
+              <CardDescription>{t("独立累计统计，清空请求日志不会重置金额。")}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-md border p-3">
+                  <div className="text-[10px] text-muted-foreground">{t("请求次数")}</div>
+                  <div className="text-sm font-semibold tabular-nums">{account.usageRequestCount}</div>
+                </div>
+                <div className="rounded-md border p-3">
+                  <div className="text-[10px] text-muted-foreground">{t("累计 Token")}</div>
+                  <div className="text-sm font-semibold tabular-nums">{account.usageTotalTokens.toLocaleString()}</div>
+                </div>
+                <div className="rounded-md border p-3">
+                  <div className="text-[10px] text-muted-foreground">{t("累计金额")}</div>
+                  <div className="text-sm font-semibold text-emerald-600 tabular-nums">${account.usageEstimatedCostUsd.toFixed(4)}</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card size="sm">
+            <CardHeader>
               <CardTitle>{t("套餐信息")}</CardTitle>
               <CardDescription>
                 {t("这里展示账号套餐接口同步回来的套餐状态与时间信息。")}

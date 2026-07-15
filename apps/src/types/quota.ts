@@ -64,6 +64,33 @@ export interface BillingRuleUpsertParams {
   endsAt?: number | null;
 }
 
+export interface ModelPriceRule {
+  id: string;
+  provider: string;
+  modelPattern: string;
+  matchType: "exact" | "prefix" | "wildcard" | string;
+  inputPricePer1m: number | null;
+  cachedInputPricePer1m: number | null;
+  outputPricePer1m: number | null;
+  reasoningOutputPricePer1m: number | null;
+  source: string;
+  enabled: boolean;
+  priority: number;
+}
+
+export interface ModelPriceRuleUpsertParams {
+  id?: string | null;
+  provider: string;
+  modelPattern: string;
+  matchType: string;
+  inputPricePer1m: number;
+  cachedInputPricePer1m?: number | null;
+  outputPricePer1m: number;
+  reasoningOutputPricePer1m?: number | null;
+  enabled?: boolean;
+  priority?: number;
+}
+
 export interface QuotaModelUsageItem {
   model: string;
   provider: string | null;

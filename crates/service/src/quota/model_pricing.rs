@@ -22,6 +22,7 @@ pub(crate) struct ModelPriceMatch {
     pub(crate) input_price_per_1m: f64,
     pub(crate) cached_input_price_per_1m: f64,
     pub(crate) output_price_per_1m: f64,
+    pub(crate) reasoning_output_price_per_1m: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -483,6 +484,7 @@ fn price_from_rule(rule: &ModelPriceRule, input_tokens: i64) -> Option<ModelPric
         input_price_per_1m: input,
         cached_input_price_per_1m: cached,
         output_price_per_1m: output,
+        reasoning_output_price_per_1m: rule.reasoning_output_price_per_1m.unwrap_or(output),
     })
 }
 
@@ -541,6 +543,7 @@ pub(crate) fn resolve_model_price(model: &str, input_tokens: i64) -> Option<Mode
         input_price_per_1m: input,
         cached_input_price_per_1m: cached,
         output_price_per_1m: output,
+        reasoning_output_price_per_1m: output,
     })
 }
 
@@ -549,14 +552,18 @@ fn estimate_cost_from_price(
     input_tokens: i64,
     cached_input_tokens: i64,
     output_tokens: i64,
+    reasoning_output_tokens: i64,
 ) -> CostEstimate {
     let input_total = input_tokens.max(0) as f64;
     let cached_input = (cached_input_tokens.max(0) as f64).min(input_total);
     let billable_input = (input_total - cached_input).max(0.0);
-    let output = output_tokens.max(0) as f64;
+    let output_total = output_tokens.max(0) as f64;
+    let reasoning_output = (reasoning_output_tokens.max(0) as f64).min(output_total);
+    let visible_output = (output_total - reasoning_output).max(0.0);
     let cost = (billable_input / 1_000_000.0) * price.input_price_per_1m
         + (cached_input / 1_000_000.0) * price.cached_input_price_per_1m
-        + (output / 1_000_000.0) * price.output_price_per_1m;
+        + (visible_output / 1_000_000.0) * price.output_price_per_1m
+        + (reasoning_output / 1_000_000.0) * price.reasoning_output_price_per_1m;
 
     CostEstimate {
         provider: Some(price.provider),
@@ -586,7 +593,7 @@ pub(crate) fn estimate_cost(
         };
     };
 
-    estimate_cost_from_price(price, input_tokens, cached_input_tokens, output_tokens)
+    estimate_cost_from_price(price, input_tokens, cached_input_tokens, output_tokens, 0)
 }
 
 pub(crate) fn estimate_cost_with_rules(
@@ -595,6 +602,24 @@ pub(crate) fn estimate_cost_with_rules(
     input_tokens: i64,
     cached_input_tokens: i64,
     output_tokens: i64,
+) -> CostEstimate {
+    estimate_cost_with_rules_and_reasoning(
+        rules,
+        model,
+        input_tokens,
+        cached_input_tokens,
+        output_tokens,
+        0,
+    )
+}
+
+pub(crate) fn estimate_cost_with_rules_and_reasoning(
+    rules: &[ModelPriceRule],
+    model: Option<&str>,
+    input_tokens: i64,
+    cached_input_tokens: i64,
+    output_tokens: i64,
+    reasoning_output_tokens: i64,
 ) -> CostEstimate {
     let Some(model) = model.map(str::trim).filter(|value| !value.is_empty()) else {
         return CostEstimate {
@@ -614,7 +639,13 @@ pub(crate) fn estimate_cost_with_rules(
         };
     };
 
-    estimate_cost_from_price(price, input_tokens, cached_input_tokens, output_tokens)
+    estimate_cost_from_price(
+        price,
+        input_tokens,
+        cached_input_tokens,
+        output_tokens,
+        reasoning_output_tokens,
+    )
 }
 
 pub(crate) fn estimate_remaining_tokens_from_usd_with_rules(
@@ -643,15 +674,19 @@ pub(crate) fn estimate_cost_usd_for_log(
     input_tokens: Option<i64>,
     cached_input_tokens: Option<i64>,
     output_tokens: Option<i64>,
+    reasoning_output_tokens: Option<i64>,
 ) -> f64 {
     let input = input_tokens.unwrap_or(0);
     let cached = cached_input_tokens.unwrap_or(0);
     let output = output_tokens.unwrap_or(0);
+    let reasoning = reasoning_output_tokens.unwrap_or(0);
     let cost = storage
         .list_enabled_model_price_rules()
         .ok()
         .filter(|rules| !rules.is_empty())
-        .map(|rules| estimate_cost_with_rules(&rules, model, input, cached, output))
+        .map(|rules| {
+            estimate_cost_with_rules_and_reasoning(&rules, model, input, cached, output, reasoning)
+        })
         .unwrap_or_else(|| estimate_cost(model, input, cached, output));
 
     cost.cost_usd.unwrap_or(0.0)
@@ -799,5 +834,20 @@ mod tests {
         assert_close(long_context.input_price_per_1m, 5.0);
         assert_close(long_context.cached_input_price_per_1m, 0.5);
         assert_close(long_context.output_price_per_1m, 22.5);
+    }
+
+    #[test]
+    fn custom_rule_can_price_reasoning_output_separately() {
+        let mut rule = test_rule("reasoning", "gpt-custom", "exact", 100, 1.0, Some(0.1), 2.0);
+        rule.reasoning_output_price_per_1m = Some(8.0);
+        let cost = estimate_cost_with_rules_and_reasoning(
+            &[rule],
+            Some("gpt-custom"),
+            1_000_000,
+            200_000,
+            500_000,
+            100_000,
+        );
+        assert_close(cost.cost_usd.expect("cost"), 2.42);
     }
 }

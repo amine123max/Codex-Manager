@@ -6,6 +6,7 @@ import { useI18n } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 import { resolveAccountPlanKey } from "@/lib/utils/account-plan";
 import {
+  formatCompactNumber,
   formatRemainingDurationFromSeconds,
   formatTsFromSeconds,
   getExtraUsageDisplayRows,
@@ -186,68 +187,27 @@ function QuotaProgress({
   );
 }
 
-export function QuotaOverviewCell({ items }: { items: QuotaSummaryItem[] }) {
+export function QuotaOverviewCell({ items, account }: { items: QuotaSummaryItem[]; account: Account }) {
   const { t } = useI18n();
   const summaryItems = items.slice(0, 2);
 
   return (
     <Tooltip>
       <TooltipTrigger render={<div />} className="block cursor-help">
-        <div className="rounded-xl border border-primary/5 bg-accent/10 px-3 py-2">
-          <div className="flex items-center gap-3">
-            {summaryItems.map((item) => (
-              <div key={item.id} className="min-w-0 flex-1 space-y-1">
-                <div className="flex items-center justify-between text-[10px]">
-                  <span className="truncate text-muted-foreground">{item.label}</span>
-                  <span className="font-medium text-foreground/80">
-                    {item.remainPercent == null
-                      ? (item.emptyText ?? "--")
-                      : `${item.remainPercent}%`}
-                  </span>
-                </div>
-                <Progress
-                  value={item.remainPercent ?? 0}
-                  trackClassName={
-                    item.tone === "blue"
-                      ? "bg-blue-500/20"
-                      : item.tone === "amber"
-                        ? "bg-amber-500/20"
-                        : "bg-green-500/20"
-                  }
-                  indicatorClassName={
-                    item.tone === "blue"
-                      ? "bg-blue-500"
-                      : item.tone === "amber"
-                        ? "bg-amber-500"
-                        : "bg-green-500"
-                  }
-                />
-              </div>
-            ))}
+        <div className="space-y-1.5 py-1">
+          <div className="flex flex-wrap gap-1 text-[10px] tabular-nums">
+            <span className="rounded bg-muted px-1.5 py-1">{account.usageRequestCount} req</span>
+            <span className="rounded bg-muted px-1.5 py-1">{formatCompactNumber(account.usageTotalTokens, "0.00", 2, true)}</span>
+            <span className="rounded bg-muted px-1.5 py-1">${account.usageEstimatedCostUsd.toFixed(2)}</span>
           </div>
-          <div className="mt-1 grid grid-cols-2 gap-3 text-[10px] text-muted-foreground">
-            {summaryItems.map((item) => (
-              <div
-                key={`${item.id}-reset`}
-                className="flex min-w-0 items-center justify-between gap-2"
-              >
-                <span className="min-w-0 truncate">
-                  {formatTsFromSeconds(
-                    item.resetsAt,
-                    item.emptyResetText ?? t("未知"),
-                  )}
-                </span>
-                <span className="shrink-0">
-                  {formatRemainingDurationFromSeconds(
-                    item.resetsAt,
-                    item.id.endsWith("-primary") ? "hours" : "days",
-                    item.emptyResetText ?? t("未知"),
-                  )}
-                  后刷新
-                </span>
-              </div>
-            ))}
-          </div>
+          {summaryItems.map((item) => (
+            <div key={item.id} className="flex items-center gap-2 text-[10px]">
+              <span className={cn("w-9 shrink-0 rounded px-1.5 py-1 text-center font-medium", item.tone === "blue" ? "bg-blue-500/15 text-blue-600" : "bg-emerald-500/15 text-emerald-600")}>{item.id.endsWith("-primary") ? "5h" : "7d"}</span>
+              <Progress value={item.remainPercent ?? 0} className="w-16 shrink-0" trackClassName={item.tone === "blue" ? "bg-blue-500/15" : "bg-emerald-500/15"} indicatorClassName={item.tone === "blue" ? "bg-blue-500" : "bg-emerald-500"} />
+              <span className="w-12 shrink-0 text-right tabular-nums">{item.remainPercent == null ? (item.emptyText ?? "--") : `${item.remainPercent}%`}</span>
+              <span className="truncate text-muted-foreground">{formatRemainingDurationFromSeconds(item.resetsAt, item.id.endsWith("-primary") ? "hours" : "days", item.emptyResetText ?? t("未知"))}</span>
+            </div>
+          ))}
         </div>
       </TooltipTrigger>
       <TooltipContent

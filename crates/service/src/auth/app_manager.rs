@@ -972,6 +972,7 @@ fn estimate_billing_model_cost_usd(
         input_tokens,
         cached_input_tokens,
         output_tokens,
+        None,
     );
     if cost > 0.0 {
         Some(cost)

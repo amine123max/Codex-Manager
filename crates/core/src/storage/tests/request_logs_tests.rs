@@ -1,5 +1,49 @@
 use super::{RequestLog, RequestTokenStat, Storage};
 
+#[test]
+fn account_billing_totals_survive_request_log_clear() {
+    let storage = Storage::open_in_memory().expect("open");
+    storage.init().expect("init");
+    let log = RequestLog {
+        account_id: Some("acc-billing".to_string()),
+        request_path: "/v1/responses".to_string(),
+        method: "POST".to_string(),
+        model: Some("gpt-5.4".to_string()),
+        status_code: Some(200),
+        created_at: 100,
+        ..Default::default()
+    };
+    let stat = RequestTokenStat {
+        request_log_id: 0,
+        key_id: None,
+        account_id: log.account_id.clone(),
+        model: log.model.clone(),
+        input_tokens: Some(1_000),
+        cached_input_tokens: Some(200),
+        output_tokens: Some(300),
+        total_tokens: Some(1_300),
+        reasoning_output_tokens: Some(100),
+        estimated_cost_usd: Some(0.25),
+        created_at: 100,
+    };
+    storage
+        .insert_request_log_with_token_stat(&log, &stat)
+        .expect("insert log and billing stats");
+
+    storage.clear_request_logs().expect("clear request logs");
+
+    let items = storage
+        .summarize_request_token_stats_by_account()
+        .expect("read account billing totals");
+    let item = items
+        .iter()
+        .find(|item| item.account_id == "acc-billing")
+        .expect("account billing total");
+    assert_eq!(item.usage.request_count, 1);
+    assert_eq!(item.usage.total_tokens, 1_300);
+    assert_eq!(item.usage.estimated_cost_usd, 0.25);
+}
+
 /// 函数 `collect_query_plan_details`
 ///
 /// 作者: gaohongshun

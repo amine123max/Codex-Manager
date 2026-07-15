@@ -454,6 +454,13 @@ export function normalizeAccount(item: unknown, usage?: AccountUsage | null): Ac
       quotaResetAvailableCount == null
         ? null
         : Math.max(0, Math.trunc(quotaResetAvailableCount)),
+    usageRequestCount: Math.max(0, asInteger(source.usageRequestCount ?? source.usage_request_count, 0, 0)),
+    usageInputTokens: Math.max(0, asInteger(source.usageInputTokens ?? source.usage_input_tokens, 0, 0)),
+    usageCachedInputTokens: Math.max(0, asInteger(source.usageCachedInputTokens ?? source.usage_cached_input_tokens, 0, 0)),
+    usageOutputTokens: Math.max(0, asInteger(source.usageOutputTokens ?? source.usage_output_tokens, 0, 0)),
+    usageReasoningOutputTokens: Math.max(0, asInteger(source.usageReasoningOutputTokens ?? source.usage_reasoning_output_tokens, 0, 0)),
+    usageTotalTokens: Math.max(0, asInteger(source.usageTotalTokens ?? source.usage_total_tokens, 0, 0)),
+    usageEstimatedCostUsd: Math.max(0, toNullableNumber(source.usageEstimatedCostUsd ?? source.usage_estimated_cost_usd) ?? 0),
     isAvailable: availability.level === "ok",
     isLowQuota: isLowQuotaUsage(usage),
     lastRefreshAt: usage?.capturedAt ?? null,

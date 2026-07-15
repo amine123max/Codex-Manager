@@ -37,6 +37,13 @@ export interface Account {
   quotaCapacityPrimaryWindowTokens: number | null;
   quotaCapacitySecondaryWindowTokens: number | null;
   quotaResetAvailableCount: number | null;
+  usageRequestCount: number;
+  usageInputTokens: number;
+  usageCachedInputTokens: number;
+  usageOutputTokens: number;
+  usageReasoningOutputTokens: number;
+  usageTotalTokens: number;
+  usageEstimatedCostUsd: number;
   isAvailable: boolean;
   isLowQuota: boolean;
   lastRefreshAt: number | null;

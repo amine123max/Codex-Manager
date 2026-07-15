@@ -17,6 +17,7 @@ use codexmanager_core::storage::{
     UsageSnapshotRecord,
 };
 use rand::RngCore;
+use serde::Serialize;
 use serde_json::Value;
 
 use super::model_pricing;
@@ -43,6 +44,125 @@ pub(crate) struct BillingRuleUpsertInput {
     pub(crate) api_key_id: Option<String>,
     pub(crate) starts_at: Option<i64>,
     pub(crate) ends_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ModelPriceRuleUpsertInput {
+    pub(crate) id: Option<String>,
+    pub(crate) provider: String,
+    pub(crate) model_pattern: String,
+    pub(crate) match_type: String,
+    pub(crate) input_price_per_1m: Option<f64>,
+    pub(crate) cached_input_price_per_1m: Option<f64>,
+    pub(crate) output_price_per_1m: Option<f64>,
+    pub(crate) reasoning_output_price_per_1m: Option<f64>,
+    pub(crate) enabled: bool,
+    pub(crate) priority: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelPriceRuleResult {
+    id: String,
+    provider: String,
+    model_pattern: String,
+    match_type: String,
+    input_price_per_1m: Option<f64>,
+    cached_input_price_per_1m: Option<f64>,
+    output_price_per_1m: Option<f64>,
+    reasoning_output_price_per_1m: Option<f64>,
+    source: String,
+    enabled: bool,
+    priority: i64,
+}
+
+fn model_price_rule_result(rule: ModelPriceRule) -> ModelPriceRuleResult {
+    ModelPriceRuleResult {
+        id: rule.id,
+        provider: rule.provider,
+        model_pattern: rule.model_pattern,
+        match_type: rule.match_type,
+        input_price_per_1m: rule.input_price_per_1m,
+        cached_input_price_per_1m: rule.cached_input_price_per_1m,
+        output_price_per_1m: rule.output_price_per_1m,
+        reasoning_output_price_per_1m: rule.reasoning_output_price_per_1m,
+        source: rule.source,
+        enabled: rule.enabled,
+        priority: rule.priority,
+    }
+}
+
+pub(crate) fn read_model_price_rules() -> Result<Vec<ModelPriceRuleResult>, String> {
+    let storage = open_storage().ok_or_else(|| "open storage failed".to_string())?;
+    model_pricing::ensure_official_price_seed(&storage)?;
+    Ok(storage
+        .list_model_price_rules()
+        .map_err(|err| format!("list model price rules failed: {err}"))?
+        .into_iter()
+        .map(model_price_rule_result)
+        .collect())
+}
+
+pub(crate) fn upsert_model_price_rule(
+    input: ModelPriceRuleUpsertInput,
+) -> Result<Vec<ModelPriceRuleResult>, String> {
+    let pattern = input.model_pattern.trim().to_ascii_lowercase();
+    if pattern.is_empty() {
+        return Err("模型匹配规则不能为空".to_string());
+    }
+    if input.input_price_per_1m.is_none() || input.output_price_per_1m.is_none() {
+        return Err("输入与输出单价不能为空".to_string());
+    }
+    let match_type = match input.match_type.trim().to_ascii_lowercase().as_str() {
+        "exact" => "exact",
+        "glob" | "wildcard" => "wildcard",
+        _ => "prefix",
+    };
+    let storage = open_storage().ok_or_else(|| "open storage failed".to_string())?;
+    let now = codexmanager_core::storage::now_ts();
+    let provider = input.provider.trim().to_ascii_lowercase();
+    storage
+        .upsert_model_price_rule(&ModelPriceRule {
+            id: normalize_optional_text(input.id).unwrap_or_else(|| generate_id("mpr", 8)),
+            provider: if provider.is_empty() {
+                "custom".to_string()
+            } else {
+                provider
+            },
+            model_pattern: pattern,
+            match_type: match_type.to_string(),
+            billing_mode: "standard".to_string(),
+            currency: "USD".to_string(),
+            unit: "per_1m_tokens".to_string(),
+            input_price_per_1m: input.input_price_per_1m,
+            cached_input_price_per_1m: input.cached_input_price_per_1m,
+            output_price_per_1m: input.output_price_per_1m,
+            reasoning_output_price_per_1m: input.reasoning_output_price_per_1m,
+            cache_write_5m_price_per_1m: None,
+            cache_write_1h_price_per_1m: None,
+            cache_hit_price_per_1m: None,
+            long_context_threshold_tokens: None,
+            long_context_input_price_per_1m: None,
+            long_context_cached_input_price_per_1m: None,
+            long_context_output_price_per_1m: None,
+            source: "custom".to_string(),
+            source_url: None,
+            seed_version: None,
+            enabled: input.enabled,
+            priority: input.priority.max(20_000),
+            created_at: now,
+            updated_at: now,
+        })
+        .map_err(|err| format!("save model price rule failed: {err}"))?;
+    read_model_price_rules()
+}
+
+pub(crate) fn delete_model_price_rule(id: &str) -> Result<Vec<ModelPriceRuleResult>, String> {
+    let storage = open_storage().ok_or_else(|| "open storage failed".to_string())?;
+    storage
+        .delete_model_price_rule(id.trim())
+        .map_err(|err| format!("delete model price rule failed: {err}"))?;
+    read_model_price_rules()
 }
 
 #[derive(Debug, Clone, Default)]

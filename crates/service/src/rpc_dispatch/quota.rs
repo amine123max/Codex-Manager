@@ -1,6 +1,20 @@
 use codexmanager_core::rpc::types::{JsonRpcRequest, JsonRpcResponse};
 
-use crate::quota::read::{self, BillingRuleUpsertInput, QuotaRefreshSourcesInput};
+use crate::quota::read::{
+    self, BillingRuleUpsertInput, ModelPriceRuleUpsertInput, QuotaRefreshSourcesInput,
+};
+
+fn f64_param(req: &JsonRpcRequest, key: &str) -> Option<f64> {
+    req.params
+        .as_ref()
+        .and_then(|value| value.get(key))
+        .and_then(|value| {
+            value
+                .as_f64()
+                .or_else(|| value.as_str()?.trim().parse().ok())
+        })
+        .filter(|value| value.is_finite() && *value >= 0.0)
+}
 
 fn string_array_param(req: &JsonRpcRequest, key: &str) -> Vec<String> {
     req.params
@@ -36,6 +50,30 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
         }
         "quota/capacityConfig" => super::value_or_error(read::read_quota_capacity_config()),
         "quota/billingRules" => super::value_or_error(read::read_billing_rules()),
+        "quota/modelPriceRules" => super::value_or_error(read::read_model_price_rules()),
+        "quota/modelPriceRule/upsert" => {
+            super::value_or_error(read::upsert_model_price_rule(ModelPriceRuleUpsertInput {
+                id: super::string_param(req, "id"),
+                provider: super::str_param(req, "provider")
+                    .unwrap_or("custom")
+                    .to_string(),
+                model_pattern: super::str_param(req, "modelPattern")
+                    .unwrap_or("")
+                    .to_string(),
+                match_type: super::str_param(req, "matchType")
+                    .unwrap_or("prefix")
+                    .to_string(),
+                input_price_per_1m: f64_param(req, "inputPricePer1m"),
+                cached_input_price_per_1m: f64_param(req, "cachedInputPricePer1m"),
+                output_price_per_1m: f64_param(req, "outputPricePer1m"),
+                reasoning_output_price_per_1m: f64_param(req, "reasoningOutputPricePer1m"),
+                enabled: super::bool_param(req, "enabled").unwrap_or(true),
+                priority: super::i64_param(req, "priority").unwrap_or(20_000),
+            }))
+        }
+        "quota/modelPriceRule/delete" => super::value_or_error(read::delete_model_price_rule(
+            super::str_param(req, "id").unwrap_or(""),
+        )),
         "quota/billingRule/upsert" => {
             super::value_or_error(read::upsert_billing_rule(BillingRuleUpsertInput {
                 id: super::string_param(req, "id"),

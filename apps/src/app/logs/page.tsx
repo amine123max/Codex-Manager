@@ -331,6 +331,11 @@ function formatTableTokenAmount(value: number | null | undefined): string {
   return Math.round(normalized).toLocaleString("zh-CN");
 }
 
+function formatUsd(value: number | null | undefined): string {
+  const normalized = Math.max(0, Number(value) || 0);
+  return `$${normalized.toFixed(normalized >= 10 ? 2 : 4)}`;
+}
+
 /**
  * 函数 `fallbackAccountNameFromId`
  *
@@ -2091,6 +2096,9 @@ function LogsPageContent() {
                         </span>
                         <span className="opacity-60">
                           {t("缓存")} {formatTableTokenAmount(log.cachedInputTokens)}
+                        </span>
+                        <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                          {formatUsd(log.estimatedCostUsd || 0)}
                         </span>
                       </div>
                     </TableCell>

@@ -59,6 +59,7 @@ import {
 } from "@/components/ui/table";
 import { ConfirmDialog } from "@/components/modals/confirm-dialog";
 import { ModelCatalogModal } from "@/components/modals/model-catalog-modal";
+import { ModelPricingPanel } from "@/components/model-pricing-panel";
 import { useDesktopPageActive } from "@/hooks/useDesktopPageActive";
 import {
   isAdminRole,
@@ -594,6 +595,8 @@ export default function ModelsPage() {
             </div>
           </div>
         </div>
+
+        {isAdminMode ? <ModelPricingPanel enabled={canLoadAdminRoutingSources} /> : null}
 
         <Card className="glass-card shadow-md ">
           <CardHeader className="pb-3">

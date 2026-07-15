@@ -2,9 +2,9 @@ use rusqlite::{params, Result, Row};
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use super::{
-    now_ts, ApiKeyModelTokenUsageSummary, ApiKeyTokenUsageSummary, DailyTokenUsageRollup,
-    RequestLogTodaySummary, RequestTokenStat, SourceTokenUsageRollup, Storage, TokenUsageRollup,
-    TokenUsageSummary, UserTokenUsageRollup,
+    now_ts, AccountTokenUsageSummary, ApiKeyModelTokenUsageSummary, ApiKeyTokenUsageSummary,
+    DailyTokenUsageRollup, RequestLogTodaySummary, RequestTokenStat, SourceTokenUsageRollup,
+    Storage, TokenUsageRollup, TokenUsageSummary, UserTokenUsageRollup,
 };
 
 const DEFAULT_REQUEST_TOKEN_STATS_RETAIN_DAYS: i64 = 14;
@@ -130,6 +130,42 @@ fn source_id_expr(source_kind: &str) -> Option<&'static str> {
 }
 
 impl Storage {
+    pub fn summarize_request_token_stats_by_account(
+        &self,
+    ) -> Result<Vec<AccountTokenUsageSummary>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT
+                account_id, input_tokens, cached_input_tokens, output_tokens,
+                reasoning_output_tokens, total_tokens, estimated_cost_usd,
+                request_count
+            FROM account_usage_billing_stats
+            ORDER BY estimated_cost_usd DESC, account_id ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(AccountTokenUsageSummary {
+                account_id: row.get(0)?,
+                usage: TokenUsageRollup {
+                    input_tokens: row.get::<_, i64>(1)?.max(0),
+                    cached_input_tokens: row.get::<_, i64>(2)?.max(0),
+                    output_tokens: row.get::<_, i64>(3)?.max(0),
+                    reasoning_output_tokens: row.get::<_, i64>(4)?.max(0),
+                    total_tokens: row.get::<_, i64>(5)?.max(0),
+                    estimated_cost_usd: row.get::<_, f64>(6)?.max(0.0),
+                    request_count: row.get::<_, i64>(7)?.max(0),
+                    success_count: 0,
+                    error_count: 0,
+                },
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub(super) fn ensure_account_usage_billing_stats_table(&self) -> Result<()> {
+        self.conn.execute_batch(include_str!(
+            "../../migrations/064_account_usage_billing_stats.sql"
+        ))
+    }
+
     /// 函数 `insert_request_token_stat`
     ///
     /// 作者: gaohongshun

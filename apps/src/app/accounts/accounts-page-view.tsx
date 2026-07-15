@@ -73,7 +73,6 @@ import {
 } from "@/components/ui/tooltip";
 import { useI18n } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
-import { formatCompactNumber } from "@/lib/utils/usage";
 import type { Account } from "@/types";
 import {
   type AccountEditorState,
@@ -870,44 +869,32 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                         />
                       </TableCell>
                       <TableCell>
-                        <QuotaOverviewCell items={quotaItems} />
-                        <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
-                          <span className="rounded-full border border-border/50 bg-background/40 px-2 py-0.5">
-                            {t("模型池")}:{" "}
-                            {account.modelSlugs.length
-                              ? account.modelSlugs.slice(0, 2).join(", ")
-                              : t("全部 API 模型")}
-                            {account.modelSlugs.length > 2
-                              ? ` +${account.modelSlugs.length - 2}`
-                              : ""}
-                          </span>
-                          {account.quotaCapacityPrimaryWindowTokens ||
-                          account.quotaCapacitySecondaryWindowTokens ? (
-                            <span className="rounded-full border border-border/50 bg-background/40 px-2 py-0.5">
-                              {t("容量覆盖")}:{" "}
-                              {account.quotaCapacityPrimaryWindowTokens
-                                ? `5h ${formatCompactNumber(
-                                    account.quotaCapacityPrimaryWindowTokens,
-                                    "0.00",
-                                    2,
-                                    true,
-                                  )}`
-                                : "5h --"}
-                              {" / "}
-                              {account.quotaCapacitySecondaryWindowTokens
-                                ? `7d ${formatCompactNumber(
-                                    account.quotaCapacitySecondaryWindowTokens,
-                                    "0.00",
-                                    2,
-                                    true,
-                                  )}`
-                                : "7d --"}
-                            </span>
-                          ) : (
-                            <span className="rounded-full border border-border/50 bg-background/40 px-2 py-0.5">
-                              {t("未设置账号容量覆盖")}
-                            </span>
-                          )}
+                        <QuotaOverviewCell items={quotaItems} account={account} />
+                        <div className="mt-2 flex items-center gap-3 text-[11px] font-medium">
+                          <button
+                            type="button"
+                            className="text-primary hover:underline disabled:opacity-50"
+                            disabled={!isServiceReady || isRefreshingCurrentAccount}
+                            onClick={() => refreshAccount(account.id)}
+                          >
+                            {isRefreshingCurrentAccount ? t("查询中") : t("查询")}
+                          </button>
+                          <button
+                            type="button"
+                            className="text-primary hover:underline disabled:opacity-50"
+                            disabled={!isServiceReady || isRefreshingCurrentAccount}
+                            onClick={() => refreshAccount(account.id)}
+                          >
+                            {t("次数")} {quotaResetCountText}
+                          </button>
+                          <button
+                            type="button"
+                            className="text-orange-500 hover:underline disabled:text-muted-foreground disabled:no-underline"
+                            disabled={!isServiceReady || isResettingCurrentQuota || !canResetQuota}
+                            onClick={() => resetAccountQuota(account.id)}
+                          >
+                            {isResettingCurrentQuota ? t("重置中") : t("重置")}
+                          </button>
                         </div>
                       </TableCell>
                       <TableCell>

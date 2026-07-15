@@ -309,6 +309,12 @@ pub struct TokenUsageRollup {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct AccountTokenUsageSummary {
+    pub account_id: String,
+    pub usage: TokenUsageRollup,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct DailyTokenUsageRollup {
     pub day_start_ts: i64,
     pub day_end_ts: i64,
@@ -1027,6 +1033,11 @@ impl Storage {
         self.apply_compat_migration("063_account_subscriptions_account_plan_type", |s| {
             s.ensure_account_subscriptions_table()
         })?;
+        self.apply_sql_or_compat_migration(
+            "064_account_usage_billing_stats",
+            include_str!("../../migrations/064_account_usage_billing_stats.sql"),
+            |s| s.ensure_account_usage_billing_stats_table(),
+        )?;
         self.ensure_api_key_rotation_columns()?;
         self.ensure_aggregate_apis_table()?;
         self.ensure_aggregate_api_supplier_model_tables()?;
@@ -1035,6 +1046,7 @@ impl Storage {
         self.ensure_api_key_quota_limits_table()?;
         self.ensure_model_price_rules_table()?;
         self.ensure_request_token_stats_table()?;
+        self.ensure_account_usage_billing_stats_table()?;
         self.ensure_gateway_error_logs_table()?;
         self.ensure_request_log_request_type_and_service_tier_columns()?;
         self.ensure_request_log_effective_service_tier_column()?;

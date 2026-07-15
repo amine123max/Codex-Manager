@@ -270,7 +270,7 @@ fn resolve_route_details(
     trace_context: &RequestLogTraceContext<'_>,
     account_id: Option<&str>,
     model: Option<&str>,
-) -> (Option<String>, Option<String>, Option<String>) {
+) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
     let actual_source_kind = normalize_log_text(trace_context.actual_source_kind).or_else(|| {
         account_id
             .and_then(|value| normalize_log_text(Some(value)))
@@ -278,17 +278,31 @@ fn resolve_route_details(
     });
     let actual_source_id = normalize_log_text(trace_context.actual_source_id)
         .or_else(|| normalize_log_text(account_id));
-    let upstream_model = normalize_log_text(trace_context.upstream_model).or_else(|| {
-        let platform_model = model.map(str::trim).filter(|value| !value.is_empty())?;
-        let source_kind = actual_source_kind.as_deref()?;
-        let source_id = actual_source_id.as_deref()?;
-        storage
-            .find_enabled_model_source_mapping(platform_model, source_kind, source_id)
-            .ok()
-            .flatten()
-            .map(|mapping| mapping.upstream_model)
-    });
-    (upstream_model, actual_source_kind, actual_source_id)
+    let mapping = model
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|platform_model| {
+            storage
+                .find_enabled_model_source_mapping(
+                    platform_model,
+                    actual_source_kind.as_deref()?,
+                    actual_source_id.as_deref()?,
+                )
+                .ok()
+                .flatten()
+        });
+    let upstream_model = normalize_log_text(trace_context.upstream_model)
+        .or_else(|| mapping.as_ref().map(|item| item.upstream_model.clone()));
+    let billing_model = mapping
+        .and_then(|item| normalize_log_text(item.billing_model_slug.as_deref()))
+        .or_else(|| upstream_model.clone())
+        .or_else(|| normalize_log_text(model));
+    (
+        upstream_model,
+        actual_source_kind,
+        actual_source_id,
+        billing_model,
+    )
 }
 
 /// 函数 `response_adapter_label`
@@ -414,13 +428,6 @@ pub(crate) fn write_request_log_with_attempts(
     let duration_ms = normalize_duration_ms(duration_ms);
     let first_response_ms = usage.first_response_ms.map(|value| value.max(0));
     let created_at = now_ts();
-    let estimated_cost_usd = crate::quota::model_pricing::estimate_cost_usd_for_log(
-        storage,
-        model,
-        input_tokens,
-        cached_input_tokens,
-        output_tokens,
-    );
     let request_type = trace_context
         .request_type
         .map(str::trim)
@@ -434,8 +441,16 @@ pub(crate) fn write_request_log_with_attempts(
         .effective_service_tier
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let (upstream_model, actual_source_kind, actual_source_id) =
+    let (upstream_model, actual_source_kind, actual_source_id, billing_model) =
         resolve_route_details(storage, &trace_context, account_id, model);
+    let estimated_cost_usd = crate::quota::model_pricing::estimate_cost_usd_for_log(
+        storage,
+        billing_model.as_deref(),
+        input_tokens,
+        cached_input_tokens,
+        output_tokens,
+        reasoning_output_tokens,
+    );
     super::trace_log::log_failed_request(super::trace_log::FailedRequestLog {
         ts: created_at,
         trace_id: trace_context.trace_id,
