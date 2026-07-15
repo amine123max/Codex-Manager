@@ -730,7 +730,7 @@ fn import_single_item_reuses_legacy_team_account_when_token_subject_matches() {
 /// # 返回
 /// 无
 #[test]
-fn import_single_item_prefers_meta_fields_for_new_account() {
+fn import_single_item_prefers_email_and_meta_fields_for_new_account() {
     let storage = Storage::open_in_memory().expect("open in memory");
     storage.init().expect("init");
     let mut idx = ExistingAccountIndex::build(&storage).expect("build index");
@@ -760,7 +760,7 @@ fn import_single_item_prefers_meta_fields_for_new_account() {
         accounts[0].id,
         build_account_storage_id("sub-1", Some("cgpt-manual"), Some("ws-manual"), None)
     );
-    assert_eq!(accounts[0].label, "Meta Label");
+    assert_eq!(accounts[0].label, "meta@example.com");
     assert_eq!(accounts[0].issuer, "https://issuer.example");
     assert_eq!(accounts[0].group_name, None);
     assert_eq!(
@@ -857,6 +857,186 @@ fn import_single_item_supports_bugteam_access_token_only_account() {
         .expect("token");
     assert_eq!(token.access_token, "opaque-bugteam-access-token");
     assert_eq!(token.refresh_token, "");
+}
+
+#[test]
+fn import_single_item_prefers_bugteam_email_over_display_name() {
+    let storage = Storage::open_in_memory().expect("open in memory");
+    storage.init().expect("init");
+    let mut idx = ExistingAccountIndex::build(&storage).expect("build index");
+    let user_email = json!({
+        "name": "Mary Jones",
+        "user": {
+            "name": "Ignored User Name",
+            "email": "mary@example.com"
+        },
+        "credentials": {
+            "access_token": "access.mary",
+            "chatgpt_account_id": "team-mary",
+            "chatgpt_user_id": "user-mary"
+        }
+    });
+    let credentials_email = json!({
+        "name": "Emma Smith",
+        "credentials": {
+            "access_token": "access.emma",
+            "email": "emma@example.com",
+            "chatgpt_account_id": "team-emma",
+            "chatgpt_user_id": "user-emma"
+        }
+    });
+
+    assert!(import_single_item(&storage, &mut idx, &user_email, 1).expect("import mary"));
+    assert!(import_single_item(&storage, &mut idx, &credentials_email, 2).expect("import emma"));
+
+    let accounts = storage.list_accounts().expect("list accounts");
+    assert_eq!(accounts.len(), 2);
+    assert!(accounts
+        .iter()
+        .any(|account| account.label == "mary@example.com"));
+    assert!(accounts
+        .iter()
+        .any(|account| account.label == "emma@example.com"));
+}
+
+#[test]
+fn import_single_item_persists_sub2api_account_type_labels() {
+    let storage = Storage::open_in_memory().expect("open in memory");
+    storage.init().expect("init");
+    let mut idx = ExistingAccountIndex::build(&storage).expect("build index");
+    let credentials_plan = json!({
+        "name": "K12 Credentials Account",
+        "credentials": {
+            "access_token": "access.k12.credentials",
+            "email": "k12-credentials@example.com",
+            "plan_type": "k12",
+            "chatgpt_account_id": "team-k12-credentials",
+            "chatgpt_user_id": "user-k12-credentials"
+        }
+    });
+    let tags_plan = json!({
+        "name": "K12 Tagged Account",
+        "tags": ["BugTeam", "K12"],
+        "credentials": {
+            "access_token": "access.k12.tags",
+            "email": "k12-tags@example.com",
+            "chatgpt_account_id": "team-k12-tags",
+            "chatgpt_user_id": "user-k12-tags"
+        }
+    });
+
+    assert!(import_single_item(&storage, &mut idx, &credentials_plan, 1)
+        .expect("import credentials plan"));
+    assert!(import_single_item(&storage, &mut idx, &tags_plan, 2).expect("import tags plan"));
+
+    let subscriptions = storage
+        .list_account_subscriptions()
+        .expect("list subscriptions");
+    assert_eq!(subscriptions.len(), 2);
+    assert!(subscriptions
+        .iter()
+        .all(|item| item.account_plan_type.as_deref() == Some("k12")));
+    assert!(subscriptions
+        .iter()
+        .all(|item| item.plan_type.as_deref() == Some("k12")));
+}
+
+#[test]
+fn import_single_item_reimport_upgrades_old_name_label_to_email() {
+    let storage = Storage::open_in_memory().expect("open in memory");
+    storage.init().expect("init");
+    let mut idx = ExistingAccountIndex::build(&storage).expect("build index");
+    let original = json!({
+        "name": "Mary Jones",
+        "credentials": {
+            "access_token": "access.mary.old",
+            "chatgpt_account_id": "team-mary",
+            "chatgpt_user_id": "user-mary"
+        }
+    });
+    let updated = json!({
+        "name": "Mary Jones",
+        "credentials": {
+            "access_token": "access.mary.new",
+            "email": "mary@example.com",
+            "chatgpt_account_id": "team-mary",
+            "chatgpt_user_id": "user-mary"
+        }
+    });
+
+    assert!(import_single_item(&storage, &mut idx, &original, 1).expect("initial import"));
+    assert!(!import_single_item(&storage, &mut idx, &updated, 2).expect("reimport"));
+
+    let accounts = storage.list_accounts().expect("list accounts");
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].label, "mary@example.com");
+}
+
+#[test]
+fn import_single_item_reimport_replaces_manually_edited_label_with_email() {
+    let storage = Storage::open_in_memory().expect("open in memory");
+    storage.init().expect("init");
+    let mut idx = ExistingAccountIndex::build(&storage).expect("build index");
+    let original = json!({
+        "name": "Emma Smith",
+        "credentials": {
+            "access_token": "access.emma.old",
+            "chatgpt_account_id": "team-emma",
+            "chatgpt_user_id": "user-emma"
+        }
+    });
+
+    assert!(import_single_item(&storage, &mut idx, &original, 1).expect("initial import"));
+    let mut account = storage
+        .list_accounts()
+        .expect("list accounts")
+        .into_iter()
+        .next()
+        .expect("account");
+    account.label = "My Team Account".to_string();
+    storage
+        .insert_account(&account)
+        .expect("update manual account label");
+    let mut idx = ExistingAccountIndex::build(&storage).expect("rebuild index");
+
+    let updated = json!({
+        "name": "Emma Smith",
+        "credentials": {
+            "access_token": "access.emma.new",
+            "email": "emma@example.com",
+            "chatgpt_account_id": "team-emma",
+            "chatgpt_user_id": "user-emma"
+        }
+    });
+    assert!(!import_single_item(&storage, &mut idx, &updated, 2).expect("reimport"));
+
+    let accounts = storage.list_accounts().expect("list accounts");
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].label, "emma@example.com");
+}
+
+#[test]
+fn import_single_item_email_overrides_explicit_label() {
+    let storage = Storage::open_in_memory().expect("open in memory");
+    storage.init().expect("init");
+    let mut idx = ExistingAccountIndex::build(&storage).expect("build index");
+    let item = json!({
+        "name": "Account Name",
+        "meta": {
+            "label": "Custom Label"
+        },
+        "credentials": {
+            "access_token": "access.custom",
+            "email": "custom@example.com",
+            "chatgpt_account_id": "team-custom",
+            "chatgpt_user_id": "user-custom"
+        }
+    });
+
+    assert!(import_single_item(&storage, &mut idx, &item, 1).expect("import custom"));
+    let accounts = storage.list_accounts().expect("list accounts");
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].label, "custom@example.com");
 }
 
 #[test]

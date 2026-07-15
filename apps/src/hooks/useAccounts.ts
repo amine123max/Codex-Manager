@@ -17,6 +17,7 @@ import { useLocalDayRange } from "@/hooks/useLocalDayRange";
 import { useRuntimeCapabilities } from "@/hooks/useRuntimeCapabilities";
 import { useI18n } from "@/lib/i18n/provider";
 import { useAppStore } from "@/lib/store/useAppStore";
+import { resolveAccountPlanKey } from "@/lib/utils/account-plan";
 import { AccountListResult, AccountUsage, StartupSnapshot } from "@/types";
 
 type ImportByDirectoryResult = Awaited<ReturnType<typeof accountClient.importByDirectory>>;
@@ -327,7 +328,7 @@ export function useAccounts() {
       "business",
       "enterprise",
       "edu",
-      "unknown",
+      "k12",
     ];
     /**
      * 函数 `getSortIndex`
@@ -348,7 +349,7 @@ export function useAccounts() {
     };
 
     for (const account of accounts) {
-      const planType = String(account.planType || "").trim().toLowerCase() || "unknown";
+      const planType = resolveAccountPlanKey(account);
       map.set(planType, (map.get(planType) || 0) + 1);
     }
 

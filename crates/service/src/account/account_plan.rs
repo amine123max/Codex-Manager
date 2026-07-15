@@ -69,6 +69,8 @@ pub(crate) fn is_workspace_plan_type(plan_type: Option<&str>) -> bool {
         || normalized.contains("enterprise")
         || normalized == "edu"
         || normalized.contains("education")
+        || normalized == "k12"
+        || normalized == "k-12"
 }
 
 /// 函数 `is_free_plan_from_credits_json`
@@ -104,6 +106,7 @@ pub(crate) fn normalize_account_plan_filter(
         "business" => "business",
         "enterprise" => "enterprise",
         "edu" | "education" => "edu",
+        "k12" | "k-12" => "k12",
         "unknown" => "unknown",
         _ => return Err(format!("unsupported account plan filter: {trimmed}")),
     };
@@ -373,6 +376,8 @@ fn normalize_plan_type(value: &str) -> Option<ResolvedAccountPlan> {
         Some("enterprise")
     } else if normalized == "edu" || normalized.contains("education") {
         Some("edu")
+    } else if normalized == "k12" || normalized == "k-12" {
+        Some("k12")
     } else if normalized.contains("pro") {
         Some("pro")
     } else {
@@ -492,6 +497,7 @@ mod tests {
         assert!(is_workspace_plan_type(Some("chatgpt_business")));
         assert!(is_workspace_plan_type(Some("enterprise")));
         assert!(is_workspace_plan_type(Some("edu")));
+        assert!(is_workspace_plan_type(Some("k12")));
         assert!(!is_workspace_plan_type(Some("plus")));
         assert!(!is_workspace_plan_type(Some("pro")));
     }
@@ -676,6 +682,10 @@ mod tests {
         assert_eq!(
             normalize_plan_type("pro").map(|plan| (plan.normalized, plan.raw)),
             Some(("pro".to_string(), None))
+        );
+        assert_eq!(
+            normalize_plan_type("K-12").map(|plan| (plan.normalized, plan.raw)),
+            Some(("k12".to_string(), Some("K-12".to_string())))
         );
     }
 

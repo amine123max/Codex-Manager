@@ -4,6 +4,7 @@ import type { LucideIcon } from "lucide-react";
 import { Power, PowerOff, RefreshCw, Zap } from "lucide-react";
 import { useI18n } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
+import { resolveAccountPlanKey } from "@/lib/utils/account-plan";
 import {
   formatRemainingDurationFromSeconds,
   formatTsFromSeconds,
@@ -53,6 +54,9 @@ export function formatAccountPlanValueLabel(value: string, t: TranslateFn) {
       return "ENTERPRISE";
     case "edu":
       return "EDU";
+    case "k12":
+    case "k-12":
+      return "K12";
     case "unknown":
       return t("未知");
     default:
@@ -61,11 +65,7 @@ export function formatAccountPlanValueLabel(value: string, t: TranslateFn) {
 }
 
 export function normalizeAccountPlanKey(account: Account) {
-  return (
-    String(account.planType || "")
-      .trim()
-      .toLowerCase() || "unknown"
-  );
+  return resolveAccountPlanKey(account);
 }
 
 export function formatPlanFilterLabel(value: string, t: TranslateFn) {
@@ -504,6 +504,8 @@ export function getAccountPlanBadgeClassName(planLabel: string | null): string {
       return "bg-rose-500/10 text-rose-700 dark:text-rose-300";
     case "EDU":
       return "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300";
+    case "K12":
+      return "bg-lime-500/10 text-lime-700 dark:text-lime-300";
     default:
       return "bg-accent/50";
   }

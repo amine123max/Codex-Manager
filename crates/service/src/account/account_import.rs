@@ -56,6 +56,9 @@ struct ImportedAccount {
 #[derive(Debug, Default)]
 struct ImportAccountMeta {
     label: Option<String>,
+    display_name: Option<String>,
+    email: Option<String>,
+    plan_type: Option<String>,
     issuer: Option<String>,
     group_name: Option<String>,
     note: Option<String>,
@@ -870,31 +873,15 @@ fn import_single_item_with_account_id(
         &payload,
     );
 
-    let label = meta
-        .label
+    let email = claims
+        .as_ref()
+        .and_then(|c| c.email.clone())
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| meta.email.clone());
+    let label = email
         .clone()
-        .or_else(|| {
-            claims
-                .as_ref()
-                .and_then(|c| c.email.clone())
-                .filter(|v| !v.trim().is_empty())
-        })
-        .or_else(|| {
-            item.get("email")
-                .and_then(Value::as_str)
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-        })
-        .or_else(|| {
-            optional_string_paths(
-                item,
-                &[
-                    &["user", "email"],
-                    &["credentials", "email"],
-                    &["account", "email"],
-                ],
-            )
-        })
+        .or_else(|| meta.label.clone())
+        .or_else(|| meta.display_name.clone())
         .unwrap_or_else(|| format!("导入账号{:04}", sequence));
     let default_issuer =
         std::env::var("CODEXMANAGER_ISSUER").unwrap_or_else(|_| DEFAULT_ISSUER.to_string());
@@ -909,6 +896,11 @@ fn import_single_item_with_account_id(
         .filter(|value| !value.trim().is_empty());
     let note = meta.note.clone().filter(|value| !value.trim().is_empty());
     let tags = meta.tags.clone().filter(|value| !value.trim().is_empty());
+    let plan_type = meta
+        .plan_type
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .map(normalize_imported_plan_type);
 
     let now = now_ts();
     let (account_id, account, created) =
@@ -921,11 +913,7 @@ fn import_single_item_with_account_id(
                 .or_else(|| clean_value(existing.workspace_id.clone()));
             let updated = Account {
                 id: existing.id.clone(),
-                label: if existing.label.trim().is_empty() {
-                    label
-                } else {
-                    existing.label.clone()
-                },
+                label: merge_imported_label(&existing.label, label, email.as_deref()),
                 issuer: if existing.issuer.trim().is_empty() {
                     issuer
                 } else {
@@ -1000,6 +988,18 @@ fn import_single_item_with_account_id(
         last_refresh: now,
     };
     storage.insert_token(&token).map_err(|e| e.to_string())?;
+    if let Some(plan_type) = plan_type.as_deref() {
+        storage
+            .upsert_account_subscription(
+                &account_id,
+                !crate::account_plan::is_free_plan_type(Some(plan_type)),
+                Some(plan_type),
+                Some(plan_type),
+                None,
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+    }
     index.upsert_index(&account);
     index.index_token_subject(&account, &token);
     Ok(ImportedAccount {
@@ -1305,10 +1305,55 @@ fn token_fingerprint(refresh_token: &str) -> String {
 /// 返回函数执行结果
 fn extract_account_meta(item: &Value) -> ImportAccountMeta {
     ImportAccountMeta {
-        label: optional_string_paths(
+        label: optional_string_paths(item, &[&["meta", "label"], &["label"]]),
+        display_name: optional_string_paths(item, &[&["name"], &["user", "name"]]),
+        email: optional_string_paths(
             item,
-            &[&["meta", "label"], &["label"], &["name"], &["user", "name"]],
+            &[
+                &["email"],
+                &["user", "email"],
+                &["credentials", "email"],
+                &["account", "email"],
+            ],
         ),
+        plan_type: optional_string_paths(
+            item,
+            &[
+                &["meta", "plan_type"],
+                &["meta", "planType"],
+                &["meta", "account_type"],
+                &["meta", "accountType"],
+                &["credentials", "plan_type"],
+                &["credentials", "planType"],
+                &["credentials", "chatgpt_plan_type"],
+                &["credentials", "chatgptPlanType"],
+                &["credentials", "account_type"],
+                &["credentials", "accountType"],
+                &["credentials", "subscription_type"],
+                &["credentials", "subscriptionType"],
+                &["plan_type"],
+                &["planType"],
+                &["chatgpt_plan_type"],
+                &["chatgptPlanType"],
+                &["account_type"],
+                &["accountType"],
+                &["subscription_type"],
+                &["subscriptionType"],
+                &["account", "plan_type"],
+                &["account", "planType"],
+                &["account", "account_type"],
+                &["account", "accountType"],
+                &["extra", "plan_type"],
+                &["extra", "planType"],
+                &["extra", "account_type"],
+                &["extra", "accountType"],
+                &["tag"],
+                &["meta", "tag"],
+                &["credentials", "tag"],
+                &["extra", "tag"],
+            ],
+        )
+        .or_else(|| optional_plan_type_from_tags(item)),
         issuer: optional_string_paths(
             item,
             &[&["meta", "issuer"], &["issuer"], &["credentials", "issuer"]],
@@ -1354,6 +1399,75 @@ fn extract_account_meta(item: &Value) -> ImportAccountMeta {
             ],
         ),
     }
+}
+
+fn optional_plan_type_from_tags(item: &Value) -> Option<String> {
+    let tags = optional_tags_paths(
+        item,
+        &[
+            &["meta", "tags"],
+            &["tags"],
+            &["credentials", "tags"],
+            &["extra", "tags"],
+        ],
+    )?;
+    let values = tags
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    values
+        .iter()
+        .find(|value| is_account_plan_tag(value))
+        .map(|value| (*value).to_string())
+        .or_else(|| {
+            (values.len() == 1)
+                .then(|| values.first().map(|value| (*value).to_string()))
+                .flatten()
+        })
+}
+
+fn is_account_plan_tag(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase().replace('-', "");
+    matches!(
+        normalized.as_str(),
+        "free"
+            | "go"
+            | "plus"
+            | "pro"
+            | "team"
+            | "business"
+            | "enterprise"
+            | "edu"
+            | "education"
+            | "k12"
+    )
+}
+
+fn normalize_imported_plan_type(value: String) -> String {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized == "k-12" {
+        "k12".to_string()
+    } else {
+        normalized
+    }
+}
+
+fn merge_imported_label(
+    existing_label: &str,
+    imported_label: String,
+    email: Option<&str>,
+) -> String {
+    if let Some(email) = email.map(str::trim).filter(|value| !value.is_empty()) {
+        return email.to_string();
+    }
+
+    let existing = existing_label.trim();
+    if existing.is_empty() {
+        return imported_label;
+    }
+
+    existing_label.to_string()
 }
 
 fn required_string_paths(value: &Value, paths: &[&[&str]], label: &str) -> Result<String, String> {
