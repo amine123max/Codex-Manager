@@ -508,7 +508,11 @@ fn map_account_summary(
         Some(value) => (Some(value.normalized), value.raw),
         None => (None, None),
     };
-    let subscription_plan = subscription.and_then(|value| value.plan_type.clone());
+    let subscription_plan = reconcile_subscription_plan(
+        subscription.and_then(|value| value.plan_type.clone()),
+        fallback_plan_type.as_deref(),
+        plan_type_raw.as_deref(),
+    );
     let plan_type = fallback_plan_type;
     to_account_summary_with_reason(
         account,
@@ -528,4 +532,31 @@ fn map_account_summary(
         quota_override.and_then(|value| value.secondary_window_tokens),
         quota_reset_available_count,
     )
+}
+
+fn reconcile_subscription_plan(
+    subscription_plan: Option<String>,
+    plan_type: Option<&str>,
+    plan_type_raw: Option<&str>,
+) -> Option<String> {
+    let current = subscription_plan
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let effective = plan_type_raw
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| plan_type.map(str::trim).filter(|value| !value.is_empty()));
+    let should_use_effective = current
+        .map(|value| value.eq_ignore_ascii_case("free"))
+        .unwrap_or(true)
+        && effective.is_some_and(|value| {
+            !value.eq_ignore_ascii_case("free") && !value.eq_ignore_ascii_case("unknown")
+        });
+
+    if should_use_effective {
+        return effective.map(ToOwned::to_owned);
+    }
+
+    subscription_plan
 }

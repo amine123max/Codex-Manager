@@ -10,6 +10,23 @@ use std::thread;
 use std::time::Duration;
 use tiny_http::{Header, Response, Server, StatusCode as TinyStatusCode};
 
+#[test]
+fn accounts_check_snapshot_reconciles_k12_plan_with_free_subscription_plan() {
+    let response: super::AccountsCheckResponse = serde_json::from_str(
+        r#"{"accounts":{"workspace-k12":{"account":{"plan_type":"k12"},"entitlement":{"subscription_plan":"free","has_active_subscription":false}}}}"#,
+    )
+    .expect("parse accounts check response");
+    let entry = response
+        .accounts
+        .get("workspace-k12")
+        .expect("k12 account entry");
+
+    let snapshot = super::build_accounts_check_snapshot(entry);
+
+    assert_eq!(snapshot.account_plan_type.as_deref(), Some("k12"));
+    assert_eq!(snapshot.plan_type.as_deref(), Some("k12"));
+}
+
 struct RecordedSubscriptionRequest {
     path: String,
     authorization: Option<String>,

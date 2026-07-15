@@ -449,9 +449,16 @@ export function formatAccountSubscriptionPlanLabel(
   account: Account,
   t: TranslateFn,
 ): string {
-  const normalized = String(account.subscriptionPlan || account.planType || "")
+  const accountPlan = normalizeAccountPlanKey(account);
+  const subscriptionPlan = String(account.subscriptionPlan || "")
     .trim()
     .toLowerCase();
+  const normalized =
+    (!subscriptionPlan || subscriptionPlan === "free") &&
+    accountPlan !== "free" &&
+    accountPlan !== "unknown"
+      ? accountPlan
+      : subscriptionPlan || accountPlan;
   return normalized
     ? formatAccountPlanValueLabel(normalized, t)
     : t("未知");

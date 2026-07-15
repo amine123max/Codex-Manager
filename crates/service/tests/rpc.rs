@@ -925,6 +925,57 @@ fn rpc_account_list_prefers_accounts_check_plan_over_subscription_plan() {
     );
 }
 
+#[test]
+fn rpc_account_list_reconciles_k12_plan_with_free_subscription_plan() {
+    let ctx = RpcTestContext::new("rpc-account-list-k12-subscription-plan");
+    let storage = Storage::open(ctx.db_path()).expect("open db");
+    storage.init().expect("init schema");
+    let now = now_ts();
+    storage
+        .insert_account(&Account {
+            id: "acc-k12-plan".to_string(),
+            label: "k12@example.com".to_string(),
+            issuer: "https://auth.openai.com".to_string(),
+            chatgpt_account_id: Some("org-k12-plan".to_string()),
+            workspace_id: Some("org-k12-plan".to_string()),
+            group_name: None,
+            sort: 0,
+            status: "active".to_string(),
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("insert account");
+    storage
+        .upsert_account_subscription("acc-k12-plan", false, Some("k12"), Some("free"), None, None)
+        .expect("insert subscription result");
+
+    let server = codexmanager_service::start_one_shot_server().expect("start server");
+    let req = JsonRpcRequest {
+        id: 79.into(),
+        method: "account/list".to_string(),
+        params: None,
+        trace: None,
+    };
+    let json = serde_json::to_string(&req).expect("serialize");
+    let v = post_rpc(&server.addr, &json);
+    let item = v
+        .get("result")
+        .and_then(|value| value.get("items"))
+        .and_then(|value| value.as_array())
+        .and_then(|items| items.first())
+        .expect("account item");
+
+    assert_eq!(
+        item.get("planType").and_then(|value| value.as_str()),
+        Some("k12")
+    );
+    assert_eq!(
+        item.get("subscriptionPlan")
+            .and_then(|value| value.as_str()),
+        Some("k12")
+    );
+}
+
 /// 函数 `rpc_account_update_profile_updates_label_note_tags_and_sort`
 ///
 /// 作者: gaohongshun

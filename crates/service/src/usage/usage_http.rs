@@ -941,8 +941,17 @@ fn extract_accounts_check_has_subscription(entry: &AccountsCheckEntry) -> Option
 
 fn build_accounts_check_snapshot(entry: &AccountsCheckEntry) -> AccountSubscriptionSnapshot {
     let account_plan_type = extract_accounts_check_plan_type(entry);
-    let plan_type =
+    let mut plan_type =
         extract_accounts_check_subscription_plan(entry).or_else(|| account_plan_type.clone());
+    if plan_type
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("free"))
+        && account_plan_type.as_deref().is_some_and(|value| {
+            !value.eq_ignore_ascii_case("free") && !value.eq_ignore_ascii_case("unknown")
+        })
+    {
+        plan_type = account_plan_type.clone();
+    }
     let expires_at = extract_accounts_check_expires_at(entry);
     let renews_at = extract_accounts_check_renews_at(entry).or_else(|| {
         if entry
