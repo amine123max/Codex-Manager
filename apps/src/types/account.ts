@@ -44,6 +44,12 @@ export interface Account {
   usageReasoningOutputTokens: number;
   usageTotalTokens: number;
   usageEstimatedCostUsd: number;
+  usagePrimaryWindowRequestCount?: number;
+  usagePrimaryWindowTotalTokens?: number;
+  usagePrimaryWindowEstimatedCostUsd?: number;
+  usageSecondaryWindowRequestCount?: number;
+  usageSecondaryWindowTotalTokens?: number;
+  usageSecondaryWindowEstimatedCostUsd?: number;
   isAvailable: boolean;
   isLowQuota: boolean;
   lastRefreshAt: number | null;

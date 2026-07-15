@@ -3,6 +3,35 @@ use serde_json::Value;
 const EXTRA_RATE_LIMITS_JSON_KEY: &str = "_codexmanager_extra_rate_limits";
 const RATE_LIMIT_RESET_CREDITS_JSON_KEY: &str = "rate_limit_reset_credits";
 
+pub const PRIMARY_USAGE_WINDOW_MINUTES: i64 = 300;
+pub const SECONDARY_USAGE_WINDOW_MINUTES: i64 = 10_080;
+
+pub fn effective_usage_window_resets_at(
+    at: i64,
+    resets_at: Option<i64>,
+    window_minutes: Option<i64>,
+    fallback_window_minutes: i64,
+) -> i64 {
+    let duration = window_minutes
+        .filter(|value| *value > 0)
+        .unwrap_or(fallback_window_minutes)
+        .max(1)
+        .saturating_mul(60);
+    let at = at.max(0);
+    match resets_at.filter(|value| *value > 0) {
+        Some(reset) if reset > at => reset,
+        Some(reset) => {
+            let elapsed = at.saturating_sub(reset);
+            let periods = elapsed.saturating_div(duration).saturating_add(1);
+            reset.saturating_add(periods.saturating_mul(duration))
+        }
+        None => at
+            .saturating_div(duration)
+            .saturating_add(1)
+            .saturating_mul(duration),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct UsageSnapshot {
     pub used_percent: Option<f64>,

@@ -1,8 +1,12 @@
 use codexmanager_core::{
     rpc::types::{AccountListParams, AccountListResult, AccountSummary},
     storage::{
-        Account, AccountMetadata, AccountQuotaCapacityOverride, AccountSubscription,
-        AccountTokenUsageSummary, Token, UsageSnapshotRecord,
+        now_ts, Account, AccountMetadata, AccountQuotaCapacityOverride, AccountSubscription,
+        AccountTokenUsageSummary, AccountUsageWindowRollup, Token, UsageSnapshotRecord,
+    },
+    usage::{
+        effective_usage_window_resets_at, PRIMARY_USAGE_WINDOW_MINUTES,
+        SECONDARY_USAGE_WINDOW_MINUTES,
     },
 };
 use serde_json::Value;
@@ -324,6 +328,12 @@ fn to_account_summary_with_reason(
     usage_reasoning_output_tokens: i64,
     usage_total_tokens: i64,
     usage_estimated_cost_usd: f64,
+    usage_primary_window_request_count: i64,
+    usage_primary_window_total_tokens: i64,
+    usage_primary_window_estimated_cost_usd: f64,
+    usage_secondary_window_request_count: i64,
+    usage_secondary_window_total_tokens: i64,
+    usage_secondary_window_estimated_cost_usd: f64,
 ) -> AccountSummary {
     AccountSummary {
         id: acc.id,
@@ -353,7 +363,40 @@ fn to_account_summary_with_reason(
         usage_reasoning_output_tokens,
         usage_total_tokens,
         usage_estimated_cost_usd,
+        usage_primary_window_request_count,
+        usage_primary_window_total_tokens,
+        usage_primary_window_estimated_cost_usd,
+        usage_secondary_window_request_count,
+        usage_secondary_window_total_tokens,
+        usage_secondary_window_estimated_cost_usd,
     }
+}
+
+fn current_window_usage(
+    stats: Option<&AccountUsageWindowRollup>,
+    usage: Option<&UsageSnapshotRecord>,
+    secondary: bool,
+    at: i64,
+) -> AccountUsageWindowRollup {
+    let (resets_at, window_minutes, fallback_minutes) = if secondary {
+        (
+            usage.and_then(|value| value.secondary_resets_at),
+            usage.and_then(|value| value.secondary_window_minutes),
+            SECONDARY_USAGE_WINDOW_MINUTES,
+        )
+    } else {
+        (
+            usage.and_then(|value| value.resets_at),
+            usage.and_then(|value| value.window_minutes),
+            PRIMARY_USAGE_WINDOW_MINUTES,
+        )
+    };
+    let expected_resets_at =
+        effective_usage_window_resets_at(at, resets_at, window_minutes, fallback_minutes);
+    stats
+        .filter(|value| value.resets_at == Some(expected_resets_at))
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn value_to_non_negative_i64(value: &Value) -> Option<i64> {
@@ -527,6 +570,20 @@ fn map_account_summary(
     let quota_reset_available_count =
         quota_reset_available_count_from_usage(usages.get(&account_id));
     let billing = billing_usage.get(&account_id).map(|item| &item.usage);
+    let billing_summary = billing_usage.get(&account_id);
+    let current_at = now_ts();
+    let primary_window_usage = current_window_usage(
+        billing_summary.map(|item| &item.primary_window),
+        usages.get(&account_id),
+        false,
+        current_at,
+    );
+    let secondary_window_usage = current_window_usage(
+        billing_summary.map(|item| &item.secondary_window),
+        usages.get(&account_id),
+        true,
+        current_at,
+    );
     let (fallback_plan_type, plan_type_raw) = match plan {
         Some(value) => (Some(value.normalized), value.raw),
         None => (None, None),
@@ -563,6 +620,12 @@ fn map_account_summary(
             .unwrap_or(0),
         billing.map(|value| value.total_tokens).unwrap_or(0),
         billing.map(|value| value.estimated_cost_usd).unwrap_or(0.0),
+        primary_window_usage.request_count,
+        primary_window_usage.total_tokens,
+        primary_window_usage.estimated_cost_usd,
+        secondary_window_usage.request_count,
+        secondary_window_usage.total_tokens,
+        secondary_window_usage.estimated_cost_usd,
     )
 }
 

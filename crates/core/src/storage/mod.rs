@@ -312,6 +312,16 @@ pub struct TokenUsageRollup {
 pub struct AccountTokenUsageSummary {
     pub account_id: String,
     pub usage: TokenUsageRollup,
+    pub primary_window: AccountUsageWindowRollup,
+    pub secondary_window: AccountUsageWindowRollup,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AccountUsageWindowRollup {
+    pub resets_at: Option<i64>,
+    pub request_count: i64,
+    pub total_tokens: i64,
+    pub estimated_cost_usd: f64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1038,6 +1048,11 @@ impl Storage {
             include_str!("../../migrations/064_account_usage_billing_stats.sql"),
             |s| s.ensure_account_usage_billing_stats_table(),
         )?;
+        self.apply_sql_or_compat_migration(
+            "065_account_usage_window_billing_stats",
+            include_str!("../../migrations/065_account_usage_window_billing_stats.sql"),
+            |s| s.ensure_account_usage_billing_window_columns(),
+        )?;
         self.ensure_api_key_rotation_columns()?;
         self.ensure_aggregate_apis_table()?;
         self.ensure_aggregate_api_supplier_model_tables()?;
@@ -1047,6 +1062,7 @@ impl Storage {
         self.ensure_model_price_rules_table()?;
         self.ensure_request_token_stats_table()?;
         self.ensure_account_usage_billing_stats_table()?;
+        self.ensure_account_usage_billing_window_columns()?;
         self.ensure_gateway_error_logs_table()?;
         self.ensure_request_log_request_type_and_service_tier_columns()?;
         self.ensure_request_log_effective_service_tier_column()?;

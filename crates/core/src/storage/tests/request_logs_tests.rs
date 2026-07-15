@@ -1,4 +1,5 @@
 use super::{RequestLog, RequestTokenStat, Storage};
+use crate::storage::UsageSnapshotRecord;
 
 #[test]
 fn account_billing_totals_survive_request_log_clear() {
@@ -42,6 +43,68 @@ fn account_billing_totals_survive_request_log_clear() {
     assert_eq!(item.usage.request_count, 1);
     assert_eq!(item.usage.total_tokens, 1_300);
     assert_eq!(item.usage.estimated_cost_usd, 0.25);
+    assert_eq!(item.primary_window.request_count, 1);
+    assert_eq!(item.primary_window.total_tokens, 1_300);
+    assert_eq!(item.primary_window.estimated_cost_usd, 0.25);
+    assert_eq!(item.secondary_window.request_count, 1);
+    assert_eq!(item.secondary_window.total_tokens, 1_300);
+    assert_eq!(item.secondary_window.estimated_cost_usd, 0.25);
+}
+
+#[test]
+fn account_billing_window_stats_roll_over_independently() {
+    let storage = Storage::open_in_memory().expect("open");
+    storage.init().expect("init");
+    storage
+        .insert_usage_snapshot(&UsageSnapshotRecord {
+            account_id: "acc-window".to_string(),
+            used_percent: Some(10.0),
+            window_minutes: Some(300),
+            resets_at: Some(1_000),
+            secondary_used_percent: Some(20.0),
+            secondary_window_minutes: Some(10_080),
+            secondary_resets_at: Some(20_000),
+            credits_json: None,
+            captured_at: 50,
+        })
+        .expect("insert usage snapshot");
+
+    for (index, created_at) in [100_i64, 200, 1_100].into_iter().enumerate() {
+        let log = RequestLog {
+            trace_id: Some(format!("trc-window-{index}")),
+            account_id: Some("acc-window".to_string()),
+            request_path: "/v1/responses".to_string(),
+            method: "POST".to_string(),
+            status_code: Some(200),
+            created_at,
+            ..Default::default()
+        };
+        let stat = RequestTokenStat {
+            account_id: log.account_id.clone(),
+            total_tokens: Some(100),
+            estimated_cost_usd: Some(0.10),
+            created_at,
+            ..Default::default()
+        };
+        storage
+            .insert_request_log_with_token_stat(&log, &stat)
+            .expect("insert window billing stat");
+    }
+
+    let items = storage
+        .summarize_request_token_stats_by_account()
+        .expect("read account window billing stats");
+    let item = items
+        .iter()
+        .find(|item| item.account_id == "acc-window")
+        .expect("account window billing stats");
+    assert_eq!(item.usage.request_count, 3);
+    assert_eq!(item.primary_window.request_count, 1);
+    assert_eq!(item.primary_window.total_tokens, 100);
+    assert!((item.primary_window.estimated_cost_usd - 0.10).abs() < f64::EPSILON);
+    assert_eq!(item.secondary_window.request_count, 3);
+    assert_eq!(item.secondary_window.total_tokens, 300);
+    assert!((item.secondary_window.estimated_cost_usd - 0.30).abs() < f64::EPSILON);
 }
 
 /// 函数 `collect_query_plan_details`

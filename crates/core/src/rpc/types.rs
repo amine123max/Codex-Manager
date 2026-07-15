@@ -211,6 +211,18 @@ pub struct AccountSummary {
     pub usage_total_tokens: i64,
     #[serde(default)]
     pub usage_estimated_cost_usd: f64,
+    #[serde(default)]
+    pub usage_primary_window_request_count: i64,
+    #[serde(default)]
+    pub usage_primary_window_total_tokens: i64,
+    #[serde(default)]
+    pub usage_primary_window_estimated_cost_usd: f64,
+    #[serde(default)]
+    pub usage_secondary_window_request_count: i64,
+    #[serde(default)]
+    pub usage_secondary_window_total_tokens: i64,
+    #[serde(default)]
+    pub usage_secondary_window_estimated_cost_usd: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -9,6 +9,7 @@ import {
   Download,
   FileUp,
   FolderOpen,
+  History,
   KeyRound,
   Loader2,
   MoreVertical,
@@ -782,7 +783,7 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                   />
                 </TableHead>
                 <TableHead className="max-w-[220px]">{t("账号信息")}</TableHead>
-                <TableHead className="min-w-[250px] text-center">
+                <TableHead className="w-[38%] min-w-[300px] text-center">
                   {t("额度详情")}
                 </TableHead>
                 <TableHead className="w-[156px]">{t("顺序")}</TableHead>
@@ -868,31 +869,34 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                           isPreferred={account.preferred}
                         />
                       </TableCell>
-                      <TableCell>
-                        <QuotaOverviewCell items={quotaItems} account={account} />
+                      <TableCell className="w-[38%] min-w-[300px]">
+                        <QuotaOverviewCell items={quotaItems} />
                         <div className="mt-2 flex items-center gap-3 text-[11px] font-medium">
                           <button
                             type="button"
-                            className="text-primary hover:underline disabled:opacity-50"
+                            className="inline-flex items-center gap-1 text-primary hover:underline disabled:opacity-50"
                             disabled={!isServiceReady || isRefreshingCurrentAccount}
                             onClick={() => refreshAccount(account.id)}
                           >
-                            {isRefreshingCurrentAccount ? t("查询中") : t("查询")}
+                            <RefreshCw className={cn("h-3 w-3", isRefreshingCurrentAccount && "animate-spin")} />
+                            {t("刷新")}
                           </button>
                           <button
                             type="button"
-                            className="text-primary hover:underline disabled:opacity-50"
+                            className="inline-flex items-center gap-1 text-primary hover:underline disabled:opacity-50"
                             disabled={!isServiceReady || isRefreshingCurrentAccount}
                             onClick={() => refreshAccount(account.id)}
                           >
+                            <History className={cn("h-3 w-3", isRefreshingCurrentAccount && "animate-pulse")} />
                             {t("次数")} {quotaResetCountText}
                           </button>
                           <button
                             type="button"
-                            className="text-orange-500 hover:underline disabled:text-muted-foreground disabled:no-underline"
+                            className="inline-flex items-center gap-1 text-orange-500 hover:underline disabled:no-underline disabled:opacity-45"
                             disabled={!isServiceReady || isResettingCurrentQuota || !canResetQuota}
                             onClick={() => resetAccountQuota(account.id)}
                           >
+                            <RefreshCcw className={cn("h-3 w-3", isResettingCurrentQuota && "animate-spin")} />
                             {isResettingCurrentQuota ? t("重置中") : t("重置")}
                           </button>
                         </div>

@@ -107,6 +107,9 @@ export interface QuotaProgressProps {
 
 export interface QuotaSummaryItem extends QuotaProgressProps {
   id: string;
+  usageRequestCount: number;
+  usageTotalTokens: number;
+  usageEstimatedCostUsd: number;
 }
 
 export interface AccountEditorState {
@@ -187,25 +190,27 @@ function QuotaProgress({
   );
 }
 
-export function QuotaOverviewCell({ items, account }: { items: QuotaSummaryItem[]; account: Account }) {
+export function QuotaOverviewCell({ items }: { items: QuotaSummaryItem[] }) {
   const { t } = useI18n();
   const summaryItems = items.slice(0, 2);
 
   return (
     <Tooltip>
-      <TooltipTrigger render={<div />} className="block cursor-help">
-        <div className="space-y-1.5 py-1">
-          <div className="flex flex-wrap gap-1 text-[10px] tabular-nums">
-            <span className="rounded bg-muted px-1.5 py-1">{account.usageRequestCount} req</span>
-            <span className="rounded bg-muted px-1.5 py-1">{formatCompactNumber(account.usageTotalTokens, "0.00", 2, true)}</span>
-            <span className="rounded bg-muted px-1.5 py-1">${account.usageEstimatedCostUsd.toFixed(2)}</span>
-          </div>
+      <TooltipTrigger render={<div />} className="block w-full cursor-help">
+        <div className="w-full min-w-[280px] space-y-2 py-1">
           {summaryItems.map((item) => (
-            <div key={item.id} className="flex items-center gap-2 text-[10px]">
-              <span className={cn("w-9 shrink-0 rounded px-1.5 py-1 text-center font-medium", item.tone === "blue" ? "bg-blue-500/15 text-blue-600" : "bg-emerald-500/15 text-emerald-600")}>{item.id.endsWith("-primary") ? "5h" : "7d"}</span>
-              <Progress value={item.remainPercent ?? 0} className="w-16 shrink-0" trackClassName={item.tone === "blue" ? "bg-blue-500/15" : "bg-emerald-500/15"} indicatorClassName={item.tone === "blue" ? "bg-blue-500" : "bg-emerald-500"} />
-              <span className="w-12 shrink-0 text-right tabular-nums">{item.remainPercent == null ? (item.emptyText ?? "--") : `${item.remainPercent}%`}</span>
-              <span className="truncate text-muted-foreground">{formatRemainingDurationFromSeconds(item.resetsAt, item.id.endsWith("-primary") ? "hours" : "days", item.emptyResetText ?? t("未知"))}</span>
+            <div key={item.id} className="space-y-1 text-[10px]">
+              <div className="flex flex-wrap items-center gap-1 tabular-nums">
+                <span className="rounded bg-muted px-1.5 py-1">{item.usageRequestCount} req</span>
+                <span className="rounded bg-muted px-1.5 py-1">{formatCompactNumber(item.usageTotalTokens, "0.00", 2, true)}</span>
+                <span className="rounded bg-muted px-1.5 py-1">${item.usageEstimatedCostUsd.toFixed(2)}</span>
+              </div>
+              <div className="grid w-full grid-cols-[2.25rem_minmax(4rem,1fr)_2.75rem_minmax(3.5rem,auto)] items-center gap-2">
+                <span className={cn("rounded px-1.5 py-1 text-center font-medium", item.tone === "blue" ? "bg-blue-500/15 text-blue-600" : "bg-emerald-500/15 text-emerald-600")}>{item.id.endsWith("-primary") ? "5h" : "7d"}</span>
+                <Progress value={item.remainPercent ?? 0} className="min-w-0 w-full" trackClassName={item.tone === "blue" ? "bg-blue-500/15" : "bg-emerald-500/15"} indicatorClassName={item.tone === "blue" ? "bg-blue-500" : "bg-emerald-500"} />
+                <span className="text-right tabular-nums">{item.remainPercent == null ? (item.emptyText ?? "--") : `${item.remainPercent}%`}</span>
+                <span className="truncate text-muted-foreground">{formatRemainingDurationFromSeconds(item.resetsAt, item.id.endsWith("-primary") ? "hours" : "days", item.emptyResetText ?? t("未知"))}</span>
+              </div>
             </div>
           ))}
         </div>
@@ -567,6 +572,9 @@ export function buildQuotaSummaryItems(
       caption: t("标准模型窗口"),
       emptyText: secondaryWindowOnly ? t("未提供") : "--",
       emptyResetText: secondaryWindowOnly ? t("未提供") : t("未知"),
+      usageRequestCount: account.usagePrimaryWindowRequestCount ?? 0,
+      usageTotalTokens: account.usagePrimaryWindowTotalTokens ?? 0,
+      usageEstimatedCostUsd: account.usagePrimaryWindowEstimatedCostUsd ?? 0,
     },
     {
       id: `${account.id}-secondary`,
@@ -578,6 +586,9 @@ export function buildQuotaSummaryItems(
       caption: t("长周期窗口"),
       emptyText: primaryWindowOnly ? t("未提供") : "--",
       emptyResetText: primaryWindowOnly ? t("未提供") : t("未知"),
+      usageRequestCount: account.usageSecondaryWindowRequestCount ?? 0,
+      usageTotalTokens: account.usageSecondaryWindowTotalTokens ?? 0,
+      usageEstimatedCostUsd: account.usageSecondaryWindowEstimatedCostUsd ?? 0,
     },
     ...extraUsageRows.map((item) => ({
       id: item.id,
@@ -589,6 +600,9 @@ export function buildQuotaSummaryItems(
       caption: t(item.windowLabel, item.windowLabelValues),
       emptyText: "--",
       emptyResetText: t("未知"),
+      usageRequestCount: 0,
+      usageTotalTokens: 0,
+      usageEstimatedCostUsd: 0,
     })),
   ];
 }

@@ -46,6 +46,12 @@ fn account_summary_serialization_matches_compact_contract() {
         usage_reasoning_output_tokens: 50,
         usage_total_tokens: 1_200,
         usage_estimated_cost_usd: 0.12,
+        usage_primary_window_request_count: 8,
+        usage_primary_window_total_tokens: 800,
+        usage_primary_window_estimated_cost_usd: 0.08,
+        usage_secondary_window_request_count: 12,
+        usage_secondary_window_total_tokens: 1_200,
+        usage_secondary_window_estimated_cost_usd: 0.12,
     };
 
     let value = serde_json::to_value(summary).expect("serialize account summary");
@@ -134,6 +140,12 @@ fn account_list_result_serialization_includes_pagination_fields() {
             usage_reasoning_output_tokens: 50,
             usage_total_tokens: 1_200,
             usage_estimated_cost_usd: 0.12,
+            usage_primary_window_request_count: 8,
+            usage_primary_window_total_tokens: 800,
+            usage_primary_window_estimated_cost_usd: 0.08,
+            usage_secondary_window_request_count: 12,
+            usage_secondary_window_total_tokens: 1_200,
+            usage_secondary_window_estimated_cost_usd: 0.12,
         }],
         total: 9,
         page: 2,

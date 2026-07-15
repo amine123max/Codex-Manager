@@ -2,9 +2,9 @@ use rusqlite::{params, Result, Row};
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use super::{
-    now_ts, AccountTokenUsageSummary, ApiKeyModelTokenUsageSummary, ApiKeyTokenUsageSummary,
-    DailyTokenUsageRollup, RequestLogTodaySummary, RequestTokenStat, SourceTokenUsageRollup,
-    Storage, TokenUsageRollup, TokenUsageSummary, UserTokenUsageRollup,
+    now_ts, AccountTokenUsageSummary, AccountUsageWindowRollup, ApiKeyModelTokenUsageSummary,
+    ApiKeyTokenUsageSummary, DailyTokenUsageRollup, RequestLogTodaySummary, RequestTokenStat,
+    SourceTokenUsageRollup, Storage, TokenUsageRollup, TokenUsageSummary, UserTokenUsageRollup,
 };
 
 const DEFAULT_REQUEST_TOKEN_STATS_RETAIN_DAYS: i64 = 14;
@@ -137,7 +137,11 @@ impl Storage {
             "SELECT
                 account_id, input_tokens, cached_input_tokens, output_tokens,
                 reasoning_output_tokens, total_tokens, estimated_cost_usd,
-                request_count
+                request_count,
+                primary_window_resets_at, primary_window_request_count,
+                primary_window_total_tokens, primary_window_estimated_cost_usd,
+                secondary_window_resets_at, secondary_window_request_count,
+                secondary_window_total_tokens, secondary_window_estimated_cost_usd
             FROM account_usage_billing_stats
             ORDER BY estimated_cost_usd DESC, account_id ASC",
         )?;
@@ -155,6 +159,18 @@ impl Storage {
                     success_count: 0,
                     error_count: 0,
                 },
+                primary_window: AccountUsageWindowRollup {
+                    resets_at: row.get(8)?,
+                    request_count: row.get::<_, i64>(9)?.max(0),
+                    total_tokens: row.get::<_, i64>(10)?.max(0),
+                    estimated_cost_usd: row.get::<_, f64>(11)?.max(0.0),
+                },
+                secondary_window: AccountUsageWindowRollup {
+                    resets_at: row.get(12)?,
+                    request_count: row.get::<_, i64>(13)?.max(0),
+                    total_tokens: row.get::<_, i64>(14)?.max(0),
+                    estimated_cost_usd: row.get::<_, f64>(15)?.max(0.0),
+                },
             })
         })?;
         rows.collect()
@@ -164,6 +180,34 @@ impl Storage {
         self.conn.execute_batch(include_str!(
             "../../migrations/064_account_usage_billing_stats.sql"
         ))
+    }
+
+    pub(super) fn ensure_account_usage_billing_window_columns(&self) -> Result<()> {
+        for (column, column_type) in [
+            ("primary_window_resets_at", "INTEGER"),
+            ("primary_window_request_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("primary_window_total_tokens", "INTEGER NOT NULL DEFAULT 0"),
+            (
+                "primary_window_estimated_cost_usd",
+                "REAL NOT NULL DEFAULT 0.0",
+            ),
+            ("secondary_window_resets_at", "INTEGER"),
+            (
+                "secondary_window_request_count",
+                "INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "secondary_window_total_tokens",
+                "INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "secondary_window_estimated_cost_usd",
+                "REAL NOT NULL DEFAULT 0.0",
+            ),
+        ] {
+            self.ensure_column("account_usage_billing_stats", column, column_type)?;
+        }
+        Ok(())
     }
 
     /// 函数 `insert_request_token_stat`
