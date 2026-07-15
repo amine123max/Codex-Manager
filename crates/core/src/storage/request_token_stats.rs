@@ -210,6 +210,12 @@ impl Storage {
         Ok(())
     }
 
+    pub(super) fn backfill_account_usage_billing_windows(&self) -> Result<()> {
+        self.conn.execute_batch(include_str!(
+            "../../migrations/066_backfill_account_usage_window_billing_stats.sql"
+        ))
+    }
+
     /// 函数 `insert_request_token_stat`
     ///
     /// 作者: gaohongshun

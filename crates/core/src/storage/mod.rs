@@ -1053,6 +1053,11 @@ impl Storage {
             include_str!("../../migrations/065_account_usage_window_billing_stats.sql"),
             |s| s.ensure_account_usage_billing_window_columns(),
         )?;
+        self.apply_sql_or_compat_migration(
+            "066_backfill_account_usage_window_billing_stats",
+            include_str!("../../migrations/066_backfill_account_usage_window_billing_stats.sql"),
+            |s| s.backfill_account_usage_billing_windows(),
+        )?;
         self.ensure_api_key_rotation_columns()?;
         self.ensure_aggregate_apis_table()?;
         self.ensure_aggregate_api_supplier_model_tables()?;

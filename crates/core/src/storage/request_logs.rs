@@ -1,8 +1,6 @@
-use rusqlite::{params, params_from_iter, types::Value, OptionalExtension, Result, Row};
+use rusqlite::{params, params_from_iter, types::Value, Result, Row};
 
-use crate::usage::{
-    effective_usage_window_resets_at, PRIMARY_USAGE_WINDOW_MINUTES, SECONDARY_USAGE_WINDOW_MINUTES,
-};
+use crate::usage::{PRIMARY_USAGE_WINDOW_MINUTES, SECONDARY_USAGE_WINDOW_MINUTES};
 
 use super::{
     request_log_query, RequestLog, RequestLogQuerySummary, RequestLogTodaySummary,
@@ -220,38 +218,12 @@ impl Storage {
                     .total_tokens
                     .unwrap_or_else(|| input.saturating_sub(cached).saturating_add(output))
                     .max(0);
-                let latest_windows = tx
-                    .query_row(
-                        "SELECT window_minutes, resets_at,
-                                secondary_window_minutes, secondary_resets_at
-                         FROM usage_snapshots
-                         WHERE account_id = ?1
-                         ORDER BY captured_at DESC, id DESC
-                         LIMIT 1",
-                        [account_id],
-                        |row| {
-                            Ok((
-                                row.get::<_, Option<i64>>(0)?,
-                                row.get::<_, Option<i64>>(1)?,
-                                row.get::<_, Option<i64>>(2)?,
-                                row.get::<_, Option<i64>>(3)?,
-                            ))
-                        },
-                    )
-                    .optional()?
-                    .unwrap_or((None, None, None, None));
-                let primary_window_resets_at = effective_usage_window_resets_at(
-                    stat.created_at,
-                    latest_windows.1,
-                    latest_windows.0,
-                    PRIMARY_USAGE_WINDOW_MINUTES,
-                );
-                let secondary_window_resets_at = effective_usage_window_resets_at(
-                    stat.created_at,
-                    latest_windows.3,
-                    latest_windows.2,
-                    SECONDARY_USAGE_WINDOW_MINUTES,
-                );
+                let primary_window_resets_at = stat
+                    .created_at
+                    .saturating_add(PRIMARY_USAGE_WINDOW_MINUTES.saturating_mul(60));
+                let secondary_window_resets_at = stat
+                    .created_at
+                    .saturating_add(SECONDARY_USAGE_WINDOW_MINUTES.saturating_mul(60));
                 tx.execute(
                     "INSERT INTO account_usage_billing_stats (
                         account_id, request_count, input_tokens, cached_input_tokens,
@@ -275,37 +247,53 @@ impl Storage {
                         total_tokens = account_usage_billing_stats.total_tokens + excluded.total_tokens,
                         estimated_cost_usd = account_usage_billing_stats.estimated_cost_usd + excluded.estimated_cost_usd,
                         primary_window_request_count = CASE
-                            WHEN account_usage_billing_stats.primary_window_resets_at = excluded.primary_window_resets_at
-                                THEN account_usage_billing_stats.primary_window_request_count + 1
-                            ELSE 1
+                            WHEN account_usage_billing_stats.primary_window_resets_at IS NULL
+                                OR account_usage_billing_stats.primary_window_resets_at <= excluded.updated_at
+                                THEN 1
+                            ELSE account_usage_billing_stats.primary_window_request_count + 1
                         END,
                         primary_window_total_tokens = CASE
-                            WHEN account_usage_billing_stats.primary_window_resets_at = excluded.primary_window_resets_at
-                                THEN account_usage_billing_stats.primary_window_total_tokens + excluded.primary_window_total_tokens
-                            ELSE excluded.primary_window_total_tokens
+                            WHEN account_usage_billing_stats.primary_window_resets_at IS NULL
+                                OR account_usage_billing_stats.primary_window_resets_at <= excluded.updated_at
+                                THEN excluded.primary_window_total_tokens
+                            ELSE account_usage_billing_stats.primary_window_total_tokens + excluded.primary_window_total_tokens
                         END,
                         primary_window_estimated_cost_usd = CASE
-                            WHEN account_usage_billing_stats.primary_window_resets_at = excluded.primary_window_resets_at
-                                THEN account_usage_billing_stats.primary_window_estimated_cost_usd + excluded.primary_window_estimated_cost_usd
-                            ELSE excluded.primary_window_estimated_cost_usd
+                            WHEN account_usage_billing_stats.primary_window_resets_at IS NULL
+                                OR account_usage_billing_stats.primary_window_resets_at <= excluded.updated_at
+                                THEN excluded.primary_window_estimated_cost_usd
+                            ELSE account_usage_billing_stats.primary_window_estimated_cost_usd + excluded.primary_window_estimated_cost_usd
                         END,
-                        primary_window_resets_at = excluded.primary_window_resets_at,
+                        primary_window_resets_at = CASE
+                            WHEN account_usage_billing_stats.primary_window_resets_at IS NULL
+                                OR account_usage_billing_stats.primary_window_resets_at <= excluded.updated_at
+                                THEN excluded.primary_window_resets_at
+                            ELSE account_usage_billing_stats.primary_window_resets_at
+                        END,
                         secondary_window_request_count = CASE
-                            WHEN account_usage_billing_stats.secondary_window_resets_at = excluded.secondary_window_resets_at
-                                THEN account_usage_billing_stats.secondary_window_request_count + 1
-                            ELSE 1
+                            WHEN account_usage_billing_stats.secondary_window_resets_at IS NULL
+                                OR account_usage_billing_stats.secondary_window_resets_at <= excluded.updated_at
+                                THEN 1
+                            ELSE account_usage_billing_stats.secondary_window_request_count + 1
                         END,
                         secondary_window_total_tokens = CASE
-                            WHEN account_usage_billing_stats.secondary_window_resets_at = excluded.secondary_window_resets_at
-                                THEN account_usage_billing_stats.secondary_window_total_tokens + excluded.secondary_window_total_tokens
-                            ELSE excluded.secondary_window_total_tokens
+                            WHEN account_usage_billing_stats.secondary_window_resets_at IS NULL
+                                OR account_usage_billing_stats.secondary_window_resets_at <= excluded.updated_at
+                                THEN excluded.secondary_window_total_tokens
+                            ELSE account_usage_billing_stats.secondary_window_total_tokens + excluded.secondary_window_total_tokens
                         END,
                         secondary_window_estimated_cost_usd = CASE
-                            WHEN account_usage_billing_stats.secondary_window_resets_at = excluded.secondary_window_resets_at
-                                THEN account_usage_billing_stats.secondary_window_estimated_cost_usd + excluded.secondary_window_estimated_cost_usd
-                            ELSE excluded.secondary_window_estimated_cost_usd
+                            WHEN account_usage_billing_stats.secondary_window_resets_at IS NULL
+                                OR account_usage_billing_stats.secondary_window_resets_at <= excluded.updated_at
+                                THEN excluded.secondary_window_estimated_cost_usd
+                            ELSE account_usage_billing_stats.secondary_window_estimated_cost_usd + excluded.secondary_window_estimated_cost_usd
                         END,
-                        secondary_window_resets_at = excluded.secondary_window_resets_at,
+                        secondary_window_resets_at = CASE
+                            WHEN account_usage_billing_stats.secondary_window_resets_at IS NULL
+                                OR account_usage_billing_stats.secondary_window_resets_at <= excluded.updated_at
+                                THEN excluded.secondary_window_resets_at
+                            ELSE account_usage_billing_stats.secondary_window_resets_at
+                        END,
                         updated_at = excluded.updated_at",
                     (
                         account_id,

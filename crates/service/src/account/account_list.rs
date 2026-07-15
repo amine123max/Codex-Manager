@@ -4,10 +4,6 @@ use codexmanager_core::{
         now_ts, Account, AccountMetadata, AccountQuotaCapacityOverride, AccountSubscription,
         AccountTokenUsageSummary, AccountUsageWindowRollup, Token, UsageSnapshotRecord,
     },
-    usage::{
-        effective_usage_window_resets_at, PRIMARY_USAGE_WINDOW_MINUTES,
-        SECONDARY_USAGE_WINDOW_MINUTES,
-    },
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -374,27 +370,10 @@ fn to_account_summary_with_reason(
 
 fn current_window_usage(
     stats: Option<&AccountUsageWindowRollup>,
-    usage: Option<&UsageSnapshotRecord>,
-    secondary: bool,
     at: i64,
 ) -> AccountUsageWindowRollup {
-    let (resets_at, window_minutes, fallback_minutes) = if secondary {
-        (
-            usage.and_then(|value| value.secondary_resets_at),
-            usage.and_then(|value| value.secondary_window_minutes),
-            SECONDARY_USAGE_WINDOW_MINUTES,
-        )
-    } else {
-        (
-            usage.and_then(|value| value.resets_at),
-            usage.and_then(|value| value.window_minutes),
-            PRIMARY_USAGE_WINDOW_MINUTES,
-        )
-    };
-    let expected_resets_at =
-        effective_usage_window_resets_at(at, resets_at, window_minutes, fallback_minutes);
     stats
-        .filter(|value| value.resets_at == Some(expected_resets_at))
+        .filter(|value| value.resets_at.is_some_and(|resets_at| resets_at > at))
         .cloned()
         .unwrap_or_default()
 }
@@ -572,16 +551,10 @@ fn map_account_summary(
     let billing = billing_usage.get(&account_id).map(|item| &item.usage);
     let billing_summary = billing_usage.get(&account_id);
     let current_at = now_ts();
-    let primary_window_usage = current_window_usage(
-        billing_summary.map(|item| &item.primary_window),
-        usages.get(&account_id),
-        false,
-        current_at,
-    );
+    let primary_window_usage =
+        current_window_usage(billing_summary.map(|item| &item.primary_window), current_at);
     let secondary_window_usage = current_window_usage(
         billing_summary.map(|item| &item.secondary_window),
-        usages.get(&account_id),
-        true,
         current_at,
     );
     let (fallback_plan_type, plan_type_raw) = match plan {

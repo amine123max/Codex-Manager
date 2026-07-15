@@ -1,5 +1,6 @@
 use super::{RequestLog, RequestTokenStat, Storage};
-use crate::storage::UsageSnapshotRecord;
+use crate::storage::now_ts;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn account_billing_totals_survive_request_log_clear() {
@@ -55,21 +56,8 @@ fn account_billing_totals_survive_request_log_clear() {
 fn account_billing_window_stats_roll_over_independently() {
     let storage = Storage::open_in_memory().expect("open");
     storage.init().expect("init");
-    storage
-        .insert_usage_snapshot(&UsageSnapshotRecord {
-            account_id: "acc-window".to_string(),
-            used_percent: Some(10.0),
-            window_minutes: Some(300),
-            resets_at: Some(1_000),
-            secondary_used_percent: Some(20.0),
-            secondary_window_minutes: Some(10_080),
-            secondary_resets_at: Some(20_000),
-            credits_json: None,
-            captured_at: 50,
-        })
-        .expect("insert usage snapshot");
 
-    for (index, created_at) in [100_i64, 200, 1_100].into_iter().enumerate() {
+    for (index, created_at) in [100_i64, 200, 18_100].into_iter().enumerate() {
         let log = RequestLog {
             trace_id: Some(format!("trc-window-{index}")),
             account_id: Some("acc-window".to_string()),
@@ -105,6 +93,104 @@ fn account_billing_window_stats_roll_over_independently() {
     assert_eq!(item.secondary_window.request_count, 3);
     assert_eq!(item.secondary_window.total_tokens, 300);
     assert!((item.secondary_window.estimated_cost_usd - 0.30).abs() < f64::EPSILON);
+}
+
+#[test]
+fn account_billing_window_stats_survive_database_reopen() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let db_path =
+        std::env::temp_dir().join(format!("codexmanager-account-window-reopen-{nonce}.db"));
+    let created_at = now_ts();
+
+    {
+        let storage = Storage::open(&db_path).expect("open");
+        storage.init().expect("init");
+        let log = RequestLog {
+            account_id: Some("acc-reopen".to_string()),
+            request_path: "/v1/responses".to_string(),
+            method: "POST".to_string(),
+            status_code: Some(200),
+            created_at,
+            ..Default::default()
+        };
+        let stat = RequestTokenStat {
+            account_id: log.account_id.clone(),
+            total_tokens: Some(321),
+            estimated_cost_usd: Some(0.45),
+            created_at,
+            ..Default::default()
+        };
+        storage
+            .insert_request_log_with_token_stat(&log, &stat)
+            .expect("insert persisted window billing stat");
+    }
+
+    {
+        let storage = Storage::open(&db_path).expect("reopen");
+        storage.init().expect("reinit");
+        let items = storage
+            .summarize_request_token_stats_by_account()
+            .expect("read reopened account window billing stats");
+        let item = items
+            .iter()
+            .find(|item| item.account_id == "acc-reopen")
+            .expect("reopened account window billing stats");
+        assert_eq!(item.primary_window.request_count, 1);
+        assert_eq!(item.primary_window.total_tokens, 321);
+        assert_eq!(item.primary_window.estimated_cost_usd, 0.45);
+        assert_eq!(item.secondary_window.request_count, 1);
+        assert_eq!(item.secondary_window.total_tokens, 321);
+        assert_eq!(item.secondary_window.estimated_cost_usd, 0.45);
+    }
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+}
+
+#[test]
+fn account_billing_window_backfill_restores_recent_persisted_stats() {
+    let storage = Storage::open_in_memory().expect("open");
+    storage.init().expect("init");
+    let created_at = now_ts();
+    storage
+        .insert_request_token_stat(&RequestTokenStat {
+            account_id: Some("acc-backfill".to_string()),
+            total_tokens: Some(654),
+            estimated_cost_usd: Some(0.78),
+            created_at,
+            ..Default::default()
+        })
+        .expect("insert historical token stat");
+    storage
+        .conn
+        .execute(
+            "INSERT INTO account_usage_billing_stats (
+                account_id, request_count, total_tokens, estimated_cost_usd, updated_at
+             ) VALUES (?1, 1, ?2, ?3, ?4)",
+            ("acc-backfill", 654_i64, 0.78_f64, created_at),
+        )
+        .expect("insert historical account billing total");
+
+    storage
+        .backfill_account_usage_billing_windows()
+        .expect("backfill account billing windows");
+    let items = storage
+        .summarize_request_token_stats_by_account()
+        .expect("read backfilled account window billing stats");
+    let item = items
+        .iter()
+        .find(|item| item.account_id == "acc-backfill")
+        .expect("backfilled account window billing stats");
+    assert_eq!(item.primary_window.request_count, 1);
+    assert_eq!(item.primary_window.total_tokens, 654);
+    assert_eq!(item.primary_window.estimated_cost_usd, 0.78);
+    assert_eq!(item.secondary_window.request_count, 1);
+    assert_eq!(item.secondary_window.total_tokens, 654);
+    assert_eq!(item.secondary_window.estimated_cost_usd, 0.78);
 }
 
 /// 函数 `collect_query_plan_details`
