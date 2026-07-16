@@ -1713,14 +1713,14 @@ fn request_token_stats_rollups_use_owner_and_actual_source_precedence() {
         .summarize_request_token_stats_daily(base, base + 2 * 86_400, 86_400)
         .expect("daily rollup");
     assert_eq!(daily.len(), 2);
-    assert_eq!(daily[0].usage.total_tokens, 170);
+    assert_eq!(daily[0].usage.total_tokens, 200);
     assert_eq!(daily[0].usage.input_tokens, 180);
     assert_eq!(daily[0].usage.cached_input_tokens, 50);
     assert_eq!(daily[0].usage.output_tokens, 70);
     assert_eq!(daily[0].usage.request_count, 2);
     assert_eq!(daily[0].usage.success_count, 1);
     assert_eq!(daily[0].usage.error_count, 1);
-    assert_eq!(daily[1].usage.total_tokens, 70);
+    assert_eq!(daily[1].usage.total_tokens, 75);
 
     let by_user = storage
         .summarize_request_token_stats_by_user_between(base, base + 86_400)
@@ -1734,7 +1734,7 @@ fn request_token_stats_rollups_use_owner_and_actual_source_precedence() {
         .find(|item| item.user_id == "current-user")
         .expect("current owner fallback rollup");
     assert_eq!(ledger_user.usage.total_tokens, 100);
-    assert_eq!(current_user.usage.total_tokens, 70);
+    assert_eq!(current_user.usage.total_tokens, 100);
 
     let ledger_direct = storage
         .summarize_request_token_stats_for_user_between("ledger-user", base, base + 86_400)
@@ -1760,7 +1760,7 @@ fn request_token_stats_rollups_use_owner_and_actual_source_precedence() {
             .expect("legacy account")
             .usage
             .total_tokens,
-        70
+        100
     );
 
     let aggregate_sources = storage
@@ -1782,7 +1782,7 @@ fn request_token_stats_rollups_use_owner_and_actual_source_precedence() {
             .expect("legacy aggregate")
             .usage
             .total_tokens,
-        40
+        45
     );
 }
 
@@ -2015,7 +2015,7 @@ fn request_token_stats_can_summarize_total_tokens_by_key() {
 
     assert_eq!(summary.len(), 2);
     assert_eq!(summary[0].key_id, "gk_alpha");
-    assert_eq!(summary[0].total_tokens, 205);
+    assert_eq!(summary[0].total_tokens, 235);
     assert!((summary[0].estimated_cost_usd - 0.46).abs() < f64::EPSILON);
     assert_eq!(summary[1].key_id, "gk_beta");
     assert_eq!(summary[1].total_tokens, 75);
@@ -2256,7 +2256,7 @@ fn storage_can_roundtrip_api_key_quota_limit_and_usage() {
         storage
             .api_key_total_token_usage("key-quota-1")
             .expect("read usage"),
-        1150
+        1250
     );
 
     storage
@@ -2266,7 +2266,7 @@ fn storage_can_roundtrip_api_key_quota_limit_and_usage() {
         storage
             .api_key_total_token_usage("key-quota-1")
             .expect("read rolled usage"),
-        1150
+        1250
     );
 
     storage

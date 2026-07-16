@@ -118,6 +118,21 @@ fn resolve_model_price_per_1k(
     normalized: &str,
     input_tokens_total: i64,
 ) -> Option<(f64, f64, f64)> {
+    if ["gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-5.3-codex"]
+        .iter()
+        .any(|prefix| normalized.starts_with(prefix))
+    {
+        if let Some(price) =
+            crate::quota::model_pricing::resolve_model_price(normalized, input_tokens_total)
+        {
+            return Some((
+                price.input_price_per_1m / 1000.0,
+                price.cached_input_price_per_1m / 1000.0,
+                price.output_price_per_1m / 1000.0,
+            ));
+        }
+    }
+
     // OpenAI 官方定价：gpt-5.5 / gpt-5.4 在输入达到 270K 时切换到更高档位。
     if normalized.starts_with("gpt-5.5-pro") {
         if input_tokens_total >= 270_000 {

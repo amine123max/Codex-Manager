@@ -5,6 +5,10 @@ use crate::storage_helpers::open_storage;
 
 const MAX_REQUESTED_DAY_RANGE_SECS: i64 = 48 * 60 * 60;
 
+fn token_total(input_tokens: i64, output_tokens: i64) -> i64 {
+    input_tokens.saturating_add(output_tokens).max(0)
+}
+
 /// 函数 `local_day_bounds_ts`
 ///
 /// 作者: gaohongshun
@@ -95,13 +99,12 @@ pub(crate) fn read_requestlog_today_summary(
     let cached_input_tokens = summary.cached_input_tokens.max(0);
     let output_tokens = summary.output_tokens.max(0);
     let reasoning_output_tokens = summary.reasoning_output_tokens.max(0);
-    let non_cached_input_tokens = input_tokens.saturating_sub(cached_input_tokens);
     Ok(RequestLogTodaySummaryResult {
         input_tokens,
         cached_input_tokens,
         output_tokens,
         reasoning_output_tokens,
-        today_tokens: non_cached_input_tokens.saturating_add(output_tokens),
+        today_tokens: token_total(input_tokens, output_tokens),
         estimated_cost: summary.estimated_cost_usd.max(0.0),
     })
 }
@@ -120,20 +123,24 @@ pub(crate) fn read_requestlog_today_summary_for_key_ids(
     let cached_input_tokens = summary.cached_input_tokens.max(0);
     let output_tokens = summary.output_tokens.max(0);
     let reasoning_output_tokens = summary.reasoning_output_tokens.max(0);
-    let non_cached_input_tokens = input_tokens.saturating_sub(cached_input_tokens);
     Ok(RequestLogTodaySummaryResult {
         input_tokens,
         cached_input_tokens,
         output_tokens,
         reasoning_output_tokens,
-        today_tokens: non_cached_input_tokens.saturating_add(output_tokens),
+        today_tokens: token_total(input_tokens, output_tokens),
         estimated_cost: summary.estimated_cost_usd.max(0.0),
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_day_bounds_ts, MAX_REQUESTED_DAY_RANGE_SECS};
+    use super::{resolve_day_bounds_ts, token_total, MAX_REQUESTED_DAY_RANGE_SECS};
+
+    #[test]
+    fn token_total_keeps_cached_openai_input_in_the_total() {
+        assert_eq!(token_total(1_000, 50), 1_050);
+    }
 
     #[test]
     fn resolve_day_bounds_uses_requested_range_when_complete() {

@@ -9,8 +9,8 @@ window_stats AS (
         SUM(CASE WHEN created_at >= now_ts - 18000 THEN
             CASE
                 WHEN total_tokens IS NOT NULL AND total_tokens > 0 THEN total_tokens
-                WHEN IFNULL(input_tokens, 0) - IFNULL(cached_input_tokens, 0) + IFNULL(output_tokens, 0) > 0
-                    THEN IFNULL(input_tokens, 0) - IFNULL(cached_input_tokens, 0) + IFNULL(output_tokens, 0)
+                WHEN IFNULL(input_tokens, 0) + IFNULL(output_tokens, 0) > 0
+                    THEN IFNULL(input_tokens, 0) + IFNULL(output_tokens, 0)
                 ELSE 0
             END
         ELSE 0 END) AS primary_total_tokens,
@@ -19,8 +19,8 @@ window_stats AS (
         COUNT(*) AS secondary_request_count,
         SUM(CASE
             WHEN total_tokens IS NOT NULL AND total_tokens > 0 THEN total_tokens
-            WHEN IFNULL(input_tokens, 0) - IFNULL(cached_input_tokens, 0) + IFNULL(output_tokens, 0) > 0
-                THEN IFNULL(input_tokens, 0) - IFNULL(cached_input_tokens, 0) + IFNULL(output_tokens, 0)
+            WHEN IFNULL(input_tokens, 0) + IFNULL(output_tokens, 0) > 0
+                THEN IFNULL(input_tokens, 0) + IFNULL(output_tokens, 0)
             ELSE 0
         END) AS secondary_total_tokens,
         SUM(CASE WHEN estimated_cost_usd > 0 THEN estimated_cost_usd ELSE 0.0 END) AS secondary_estimated_cost_usd,

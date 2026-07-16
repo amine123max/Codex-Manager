@@ -373,7 +373,7 @@ export function normalizeTodaySummary(payload: unknown): RequestLogTodaySummary 
     reasoningOutputTokens,
     todayTokens: asInteger(
       source.todayTokens,
-      Math.max(0, inputTokens - cachedInputTokens) + outputTokens,
+      inputTokens + outputTokens,
       0
     ),
     estimatedCost: Math.max(0, toNullableNumber(source.estimatedCost) ?? 0),

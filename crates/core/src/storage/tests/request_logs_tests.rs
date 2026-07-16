@@ -152,6 +152,125 @@ fn account_billing_window_stats_survive_database_reopen() {
 }
 
 #[test]
+fn inclusive_openai_token_fallback_survives_database_reopen() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let db_path = std::env::temp_dir().join(format!("codexmanager-token-fallback-{nonce}.db"));
+    let created_at = now_ts();
+
+    {
+        let storage = Storage::open(&db_path).expect("open");
+        storage.init().expect("init");
+        let log = RequestLog {
+            account_id: Some("acc-inclusive-input".to_string()),
+            request_path: "/v1/responses".to_string(),
+            method: "POST".to_string(),
+            status_code: Some(200),
+            created_at,
+            ..Default::default()
+        };
+        let stat = RequestTokenStat {
+            account_id: log.account_id.clone(),
+            input_tokens: Some(1_000),
+            cached_input_tokens: Some(800),
+            output_tokens: Some(50),
+            total_tokens: None,
+            estimated_cost_usd: Some(0.25),
+            created_at,
+            ..Default::default()
+        };
+        storage
+            .insert_request_log_with_token_stat(&log, &stat)
+            .expect("insert inclusive input usage");
+    }
+
+    for _ in 0..2 {
+        let storage = Storage::open(&db_path).expect("reopen");
+        storage.init().expect("reinit");
+        let item = storage
+            .summarize_request_token_stats_by_account()
+            .expect("read account usage")
+            .into_iter()
+            .find(|item| item.account_id == "acc-inclusive-input")
+            .expect("persisted account usage");
+        assert_eq!(item.usage.total_tokens, 1_050);
+        assert_eq!(item.primary_window.total_tokens, 1_050);
+        assert_eq!(item.secondary_window.total_tokens, 1_050);
+        assert_eq!(item.usage.estimated_cost_usd, 0.25);
+    }
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+}
+
+#[test]
+fn sub2api_repricing_migration_is_idempotent_and_updates_windows() {
+    let storage = Storage::open_in_memory().expect("open");
+    storage.init().expect("init");
+    let created_at = now_ts();
+    let old_cost = 0.00085_f64;
+    let expected_cost = 0.0029_f64;
+    let log = RequestLog {
+        account_id: Some("acc-gpt56-reprice".to_string()),
+        request_path: "/v1/responses".to_string(),
+        method: "POST".to_string(),
+        model: Some("gpt-5.6-sol".to_string()),
+        status_code: Some(200),
+        created_at,
+        ..Default::default()
+    };
+    let stat = RequestTokenStat {
+        account_id: log.account_id.clone(),
+        model: log.model.clone(),
+        input_tokens: Some(1_000),
+        cached_input_tokens: Some(800),
+        output_tokens: Some(50),
+        total_tokens: None,
+        estimated_cost_usd: Some(old_cost),
+        created_at,
+        ..Default::default()
+    };
+    storage
+        .insert_request_log_with_token_stat(&log, &stat)
+        .expect("insert old priced usage");
+
+    storage
+        .conn
+        .execute(
+            "UPDATE account_usage_billing_stats
+             SET total_tokens = 250,
+                 primary_window_total_tokens = 250,
+                 secondary_window_total_tokens = 250
+             WHERE account_id = 'acc-gpt56-reprice'",
+            [],
+        )
+        .expect("simulate old cached-token fallback");
+
+    let migration = include_str!("../../../migrations/069_reprice_sub2api_openai_usage.sql");
+    for _ in 0..2 {
+        storage
+            .conn
+            .execute_batch(migration)
+            .expect("apply repricing migration");
+        let item = storage
+            .summarize_request_token_stats_by_account()
+            .expect("read repriced account usage")
+            .into_iter()
+            .find(|item| item.account_id == "acc-gpt56-reprice")
+            .expect("repriced account usage");
+        assert_eq!(item.usage.total_tokens, 1_050);
+        assert_eq!(item.primary_window.total_tokens, 1_050);
+        assert_eq!(item.secondary_window.total_tokens, 1_050);
+        assert!((item.usage.estimated_cost_usd - expected_cost).abs() < 1e-12);
+        assert!((item.primary_window.estimated_cost_usd - expected_cost).abs() < 1e-12);
+        assert!((item.secondary_window.estimated_cost_usd - expected_cost).abs() < 1e-12);
+    }
+}
+
+#[test]
 fn account_billing_window_backfill_restores_recent_persisted_stats() {
     let storage = Storage::open_in_memory().expect("open");
     storage.init().expect("init");

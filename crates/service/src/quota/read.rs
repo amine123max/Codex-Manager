@@ -195,8 +195,8 @@ fn local_day_bounds_ts() -> Result<(i64, i64), String> {
     Ok((start, end.max(start)))
 }
 
-fn token_total(input: i64, cached: i64, output: i64) -> i64 {
-    input.saturating_sub(cached).saturating_add(output).max(0)
+fn token_total(input: i64, _cached: i64, output: i64) -> i64 {
+    input.saturating_add(output).max(0)
 }
 
 fn parse_balance_snapshot(api: &AggregateApi) -> BalanceSnapshot {
@@ -1643,5 +1643,10 @@ mod tests {
         let models = api_available_model_slugs(&storage, &[]).expect("available models");
 
         assert_eq!(models, vec!["z-model", "a-model"]);
+    }
+
+    #[test]
+    fn token_total_keeps_cached_openai_input_in_the_total() {
+        assert_eq!(token_total(1_000, 800, 50), 1_050);
     }
 }

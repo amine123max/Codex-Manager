@@ -39,8 +39,8 @@ fn token_total_sql_expr() -> &'static str {
             CASE WHEN total_tokens > 0 THEN total_tokens ELSE 0 END
         ELSE
             CASE
-                WHEN IFNULL(input_tokens, 0) - IFNULL(cached_input_tokens, 0) + IFNULL(output_tokens, 0) > 0
-                    THEN IFNULL(input_tokens, 0) - IFNULL(cached_input_tokens, 0) + IFNULL(output_tokens, 0)
+                WHEN IFNULL(input_tokens, 0) + IFNULL(output_tokens, 0) > 0
+                    THEN IFNULL(input_tokens, 0) + IFNULL(output_tokens, 0)
                 ELSE 0
             END
      END"
@@ -58,8 +58,8 @@ const TOKEN_ROLLUP_COLUMNS: &str = "
                     CASE WHEN t.total_tokens > 0 THEN t.total_tokens ELSE 0 END
                 ELSE
                     CASE
-                        WHEN IFNULL(t.input_tokens, 0) - IFNULL(t.cached_input_tokens, 0) + IFNULL(t.output_tokens, 0) > 0
-                            THEN IFNULL(t.input_tokens, 0) - IFNULL(t.cached_input_tokens, 0) + IFNULL(t.output_tokens, 0)
+                        WHEN IFNULL(t.input_tokens, 0) + IFNULL(t.output_tokens, 0) > 0
+                            THEN IFNULL(t.input_tokens, 0) + IFNULL(t.output_tokens, 0)
                         ELSE 0
                     END
             END

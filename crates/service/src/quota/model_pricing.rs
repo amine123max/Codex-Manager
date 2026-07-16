@@ -1,6 +1,6 @@
 use codexmanager_core::storage::{now_ts, ModelPriceRule, Storage};
 
-pub(crate) const PRICE_SEED_VERSION: &str = "2026-05-11";
+pub(crate) const PRICE_SEED_VERSION: &str = "2026-07-16-sub2api";
 
 #[derive(Debug, Clone, Copy)]
 struct PriceSeed {
@@ -39,19 +39,7 @@ const GEMINI_PRICE_SOURCE: &str = "https://ai.google.dev/gemini-api/docs/pricing
 const PRICE_SEEDS: &[PriceSeed] = &[
     PriceSeed {
         provider: "openai",
-        model_pattern: "gpt-5.5-pro",
-        input_price_per_1m: 30.0,
-        cached_input_price_per_1m: None,
-        output_price_per_1m: 180.0,
-        long_context_threshold_tokens: Some(272_000),
-        long_context_input_price_per_1m: Some(60.0),
-        long_context_cached_input_price_per_1m: None,
-        long_context_output_price_per_1m: Some(270.0),
-        source_url: OPENAI_PRICE_SOURCE,
-    },
-    PriceSeed {
-        provider: "openai",
-        model_pattern: "gpt-5.5",
+        model_pattern: "gpt-5.6-sol",
         input_price_per_1m: 5.0,
         cached_input_price_per_1m: Some(0.5),
         output_price_per_1m: 30.0,
@@ -59,6 +47,66 @@ const PRICE_SEEDS: &[PriceSeed] = &[
         long_context_input_price_per_1m: Some(10.0),
         long_context_cached_input_price_per_1m: Some(1.0),
         long_context_output_price_per_1m: Some(45.0),
+        source_url: OPENAI_PRICE_SOURCE,
+    },
+    PriceSeed {
+        provider: "openai",
+        model_pattern: "gpt-5.6-terra",
+        input_price_per_1m: 2.5,
+        cached_input_price_per_1m: Some(0.25),
+        output_price_per_1m: 15.0,
+        long_context_threshold_tokens: Some(272_000),
+        long_context_input_price_per_1m: Some(5.0),
+        long_context_cached_input_price_per_1m: Some(0.5),
+        long_context_output_price_per_1m: Some(22.5),
+        source_url: OPENAI_PRICE_SOURCE,
+    },
+    PriceSeed {
+        provider: "openai",
+        model_pattern: "gpt-5.6-luna",
+        input_price_per_1m: 1.0,
+        cached_input_price_per_1m: Some(0.1),
+        output_price_per_1m: 6.0,
+        long_context_threshold_tokens: Some(272_000),
+        long_context_input_price_per_1m: Some(2.0),
+        long_context_cached_input_price_per_1m: Some(0.2),
+        long_context_output_price_per_1m: Some(9.0),
+        source_url: OPENAI_PRICE_SOURCE,
+    },
+    PriceSeed {
+        provider: "openai",
+        model_pattern: "gpt-5.6",
+        input_price_per_1m: 5.0,
+        cached_input_price_per_1m: Some(0.5),
+        output_price_per_1m: 30.0,
+        long_context_threshold_tokens: Some(272_000),
+        long_context_input_price_per_1m: Some(10.0),
+        long_context_cached_input_price_per_1m: Some(1.0),
+        long_context_output_price_per_1m: Some(45.0),
+        source_url: OPENAI_PRICE_SOURCE,
+    },
+    PriceSeed {
+        provider: "openai",
+        model_pattern: "gpt-5.5-pro",
+        input_price_per_1m: 2.5,
+        cached_input_price_per_1m: Some(0.25),
+        output_price_per_1m: 15.0,
+        long_context_threshold_tokens: Some(272_000),
+        long_context_input_price_per_1m: Some(5.0),
+        long_context_cached_input_price_per_1m: Some(0.5),
+        long_context_output_price_per_1m: Some(22.5),
+        source_url: OPENAI_PRICE_SOURCE,
+    },
+    PriceSeed {
+        provider: "openai",
+        model_pattern: "gpt-5.5",
+        input_price_per_1m: 2.5,
+        cached_input_price_per_1m: Some(0.25),
+        output_price_per_1m: 15.0,
+        long_context_threshold_tokens: Some(272_000),
+        long_context_input_price_per_1m: Some(5.0),
+        long_context_cached_input_price_per_1m: Some(0.5),
+        long_context_output_price_per_1m: Some(22.5),
         source_url: OPENAI_PRICE_SOURCE,
     },
     PriceSeed {
@@ -112,9 +160,9 @@ const PRICE_SEEDS: &[PriceSeed] = &[
     PriceSeed {
         provider: "openai",
         model_pattern: "gpt-5.3-codex",
-        input_price_per_1m: 1.75,
-        cached_input_price_per_1m: Some(0.175),
-        output_price_per_1m: 14.0,
+        input_price_per_1m: 1.5,
+        cached_input_price_per_1m: Some(0.15),
+        output_price_per_1m: 12.0,
         long_context_threshold_tokens: None,
         long_context_input_price_per_1m: None,
         long_context_cached_input_price_per_1m: None,
@@ -364,6 +412,9 @@ const PRICE_SEEDS: &[PriceSeed] = &[
 ];
 
 pub(crate) fn ensure_official_price_seed(storage: &Storage) -> Result<(), String> {
+    storage
+        .delete_obsolete_official_model_price_rules(PRICE_SEED_VERSION)
+        .map_err(|err| format!("remove obsolete model price seeds failed: {err}"))?;
     let count = storage
         .count_model_price_rules_for_seed(PRICE_SEED_VERSION)
         .map_err(|err| format!("count model price seeds failed: {err}"))?;
@@ -472,7 +523,7 @@ fn price_from_rule(rule: &ModelPriceRule, input_tokens: i64) -> Option<ModelPric
 
     if rule
         .long_context_threshold_tokens
-        .is_some_and(|threshold| input_tokens >= threshold)
+        .is_some_and(|threshold| input_tokens > threshold)
     {
         input = rule.long_context_input_price_per_1m.unwrap_or(input);
         cached = rule.long_context_cached_input_price_per_1m.unwrap_or(input);
@@ -525,7 +576,7 @@ pub(crate) fn resolve_model_price(model: &str, input_tokens: i64) -> Option<Mode
 
     if matched
         .long_context_threshold_tokens
-        .is_some_and(|threshold| input_tokens >= threshold)
+        .is_some_and(|threshold| input_tokens > threshold)
     {
         input = matched
             .long_context_input_price_per_1m
@@ -680,6 +731,7 @@ pub(crate) fn estimate_cost_usd_for_log(
     let cached = cached_input_tokens.unwrap_or(0);
     let output = output_tokens.unwrap_or(0);
     let reasoning = reasoning_output_tokens.unwrap_or(0);
+    let _ = ensure_official_price_seed(storage);
     let cost = storage
         .list_enabled_model_price_rules()
         .ok()
@@ -818,22 +870,51 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_cached_input_to_input_price_when_no_discount_exists() {
+    fn matches_sub2api_gpt_5_5_fallback_price() {
         let cost = estimate_cost(Some("gpt-5.5-pro"), 1_000, 200, 100);
         assert_eq!(cost.price_status, "ok");
-        assert_close(cost.cost_usd.expect("cost"), 0.048);
+        assert_close(cost.cost_usd.expect("cost"), 0.00355);
     }
 
     #[test]
     fn applies_openai_long_context_pricing_at_threshold() {
-        let standard = resolve_model_price("gpt-5.4", 271_999).expect("standard price");
+        let standard = resolve_model_price("gpt-5.4", 272_000).expect("standard price");
         assert_close(standard.input_price_per_1m, 2.5);
         assert_close(standard.output_price_per_1m, 15.0);
 
-        let long_context = resolve_model_price("gpt-5.4", 272_000).expect("long context price");
+        let long_context = resolve_model_price("gpt-5.4", 272_001).expect("long context price");
         assert_close(long_context.input_price_per_1m, 5.0);
         assert_close(long_context.cached_input_price_per_1m, 0.5);
         assert_close(long_context.output_price_per_1m, 22.5);
+    }
+
+    #[test]
+    fn matches_sub2api_gpt_5_6_variant_prices() {
+        let cases = [
+            ("gpt-5.6-sol", 5.0, 0.5, 30.0),
+            ("gpt-5.6-terra", 2.5, 0.25, 15.0),
+            ("gpt-5.6-luna", 1.0, 0.1, 6.0),
+            ("gpt-5.6", 5.0, 0.5, 30.0),
+        ];
+        for (model, input, cached, output) in cases {
+            let price = resolve_model_price(model, 0).expect("gpt-5.6 price");
+            assert_close(price.input_price_per_1m, input);
+            assert_close(price.cached_input_price_per_1m, cached);
+            assert_close(price.output_price_per_1m, output);
+        }
+
+        let long = resolve_model_price("gpt-5.6-sol", 272_001).expect("long price");
+        assert_close(long.input_price_per_1m, 10.0);
+        assert_close(long.cached_input_price_per_1m, 1.0);
+        assert_close(long.output_price_per_1m, 45.0);
+    }
+
+    #[test]
+    fn matches_sub2api_gpt_5_3_codex_price() {
+        let price = resolve_model_price("gpt-5.3-codex", 0).expect("codex price");
+        assert_close(price.input_price_per_1m, 1.5);
+        assert_close(price.cached_input_price_per_1m, 0.15);
+        assert_close(price.output_price_per_1m, 12.0);
     }
 
     #[test]

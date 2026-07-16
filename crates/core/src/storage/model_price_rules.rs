@@ -118,6 +118,16 @@ impl Storage {
         )
     }
 
+    pub fn delete_obsolete_official_model_price_rules(&self, seed_version: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM model_price_rules
+             WHERE source = 'official_seed'
+               AND IFNULL(seed_version, '') <> ?1",
+            [seed_version],
+        )?;
+        Ok(())
+    }
+
     pub fn list_enabled_model_price_rules(&self) -> Result<Vec<ModelPriceRule>> {
         let mut stmt = self.conn.prepare(
             "SELECT

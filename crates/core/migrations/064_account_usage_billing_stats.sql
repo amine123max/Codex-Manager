@@ -50,8 +50,8 @@ FROM (
         CASE WHEN reasoning_output_tokens > 0 THEN reasoning_output_tokens ELSE 0 END,
         CASE
             WHEN total_tokens IS NOT NULL AND total_tokens > 0 THEN total_tokens
-            WHEN IFNULL(input_tokens, 0) - IFNULL(cached_input_tokens, 0) + IFNULL(output_tokens, 0) > 0
-                THEN IFNULL(input_tokens, 0) - IFNULL(cached_input_tokens, 0) + IFNULL(output_tokens, 0)
+            WHEN IFNULL(input_tokens, 0) + IFNULL(output_tokens, 0) > 0
+                THEN IFNULL(input_tokens, 0) + IFNULL(output_tokens, 0)
             ELSE 0
         END,
         CASE WHEN estimated_cost_usd > 0 THEN estimated_cost_usd ELSE 0.0 END

@@ -1039,7 +1039,7 @@ fn request_logs_compact_migration_drops_legacy_usage_columns_and_preserves_rows(
         .expect("load migrated token stats");
     assert_eq!(token_row.0, Some(12));
     assert_eq!(token_row.1, Some(5));
-    assert_eq!(token_row.2, Some(0.25));
+    assert!((token_row.2.expect("repriced cost") - 0.000_073_95).abs() < 1e-12);
     assert_eq!(token_row.3, Some(3));
     assert_eq!(token_row.4, Some(2));
 }

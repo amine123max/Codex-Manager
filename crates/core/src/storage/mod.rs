@@ -1058,6 +1058,10 @@ impl Storage {
             include_str!("../../migrations/066_backfill_account_usage_window_billing_stats.sql"),
             |s| s.backfill_account_usage_billing_windows(),
         )?;
+        self.apply_sql_migration(
+            "069_reprice_sub2api_openai_usage",
+            include_str!("../../migrations/069_reprice_sub2api_openai_usage.sql"),
+        )?;
         self.ensure_api_key_rotation_columns()?;
         self.ensure_aggregate_apis_table()?;
         self.ensure_aggregate_api_supplier_model_tables()?;

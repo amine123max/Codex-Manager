@@ -216,7 +216,7 @@ impl Storage {
                 let reasoning = stat.reasoning_output_tokens.unwrap_or(0).max(0).min(output);
                 let total = stat
                     .total_tokens
-                    .unwrap_or_else(|| input.saturating_sub(cached).saturating_add(output))
+                    .unwrap_or_else(|| input.saturating_add(output))
                     .max(0);
                 let primary_window_resets_at = stat
                     .created_at
@@ -576,8 +576,8 @@ impl Storage {
                             CASE WHEN t.total_tokens > 0 THEN t.total_tokens ELSE 0 END
                         ELSE
                             CASE
-                                WHEN IFNULL(t.input_tokens, 0) - IFNULL(t.cached_input_tokens, 0) + IFNULL(t.output_tokens, 0) > 0
-                                    THEN IFNULL(t.input_tokens, 0) - IFNULL(t.cached_input_tokens, 0) + IFNULL(t.output_tokens, 0)
+                                WHEN IFNULL(t.input_tokens, 0) + IFNULL(t.output_tokens, 0) > 0
+                                    THEN IFNULL(t.input_tokens, 0) + IFNULL(t.output_tokens, 0)
                                 ELSE 0
                             END
                     END
@@ -631,8 +631,8 @@ impl Storage {
                             CASE WHEN t.total_tokens > 0 THEN t.total_tokens ELSE 0 END
                         ELSE
                             CASE
-                                WHEN IFNULL(t.input_tokens, 0) - IFNULL(t.cached_input_tokens, 0) + IFNULL(t.output_tokens, 0) > 0
-                                    THEN IFNULL(t.input_tokens, 0) - IFNULL(t.cached_input_tokens, 0) + IFNULL(t.output_tokens, 0)
+                                WHEN IFNULL(t.input_tokens, 0) + IFNULL(t.output_tokens, 0) > 0
+                                    THEN IFNULL(t.input_tokens, 0) + IFNULL(t.output_tokens, 0)
                                 ELSE 0
                             END
                     END

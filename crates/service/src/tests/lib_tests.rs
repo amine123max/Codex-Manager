@@ -415,18 +415,18 @@ fn wallet_charge_uses_model_group_billing_model_override() {
     .expect("charge wallet")
     .expect("ledger entry");
 
-    assert_eq!(ledger.amount_credit_micros, -35_000);
+    assert_eq!(ledger.amount_credit_micros, -17_500);
     let usage: serde_json::Value =
         serde_json::from_str(ledger.raw_usage_json.as_deref().unwrap()).expect("usage json");
     assert_eq!(usage["billingModelSlug"], "gpt-5.5");
     assert_eq!(usage["platformEstimatedCostUsd"], 0.00225);
-    assert!((usage["baseEstimatedCostUsd"].as_f64().unwrap() - 0.035).abs() < 0.000_001);
-    assert!((usage["chargedCostUsd"].as_f64().unwrap() - 0.035).abs() < 0.000_001);
+    assert!((usage["baseEstimatedCostUsd"].as_f64().unwrap() - 0.0175).abs() < 0.000_001);
+    assert!((usage["chargedCostUsd"].as_f64().unwrap() - 0.0175).abs() < 0.000_001);
     let wallet = storage
         .find_wallet_by_owner("user", &user.id)
         .expect("read wallet")
         .expect("wallet");
-    assert_eq!(wallet.balance_credit_micros, 965_000);
+    assert_eq!(wallet.balance_credit_micros, 982_500);
 
     let _ = std::fs::remove_file(db_path);
 }
