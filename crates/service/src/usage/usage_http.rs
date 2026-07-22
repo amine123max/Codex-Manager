@@ -628,6 +628,31 @@ fn build_usage_http_default_headers() -> HeaderMap {
 /// 返回函数执行结果
 fn build_usage_request_headers(workspace_id: Option<&str>) -> HeaderMap {
     let mut headers = HeaderMap::new();
+    headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+    headers.insert(
+        HeaderName::from_static("openai-beta"),
+        HeaderValue::from_static("codex-1"),
+    );
+    headers.insert(
+        HeaderName::from_static("oai-language"),
+        HeaderValue::from_static("zh-CN"),
+    );
+    headers.insert(
+        HeaderName::from_static("sec-fetch-site"),
+        HeaderValue::from_static("none"),
+    );
+    headers.insert(
+        HeaderName::from_static("sec-fetch-mode"),
+        HeaderValue::from_static("no-cors"),
+    );
+    headers.insert(
+        HeaderName::from_static("sec-fetch-dest"),
+        HeaderValue::from_static("empty"),
+    );
+    headers.insert(
+        HeaderName::from_static("priority"),
+        HeaderValue::from_static("u=4, i"),
+    );
     if let Some(workspace_id) = workspace_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -675,7 +700,7 @@ fn build_rate_limit_reset_request_headers(workspace_id: Option<&str>) -> HeaderM
     );
     headers.insert(
         HeaderName::from_static("priority"),
-        HeaderValue::from_static("u=4"),
+        HeaderValue::from_static("u=4, i"),
     );
     headers
 }
@@ -1155,12 +1180,10 @@ async fn fetch_usage_snapshot_async(
     let url = usage_endpoint(base_url);
     let build_request = || {
         let client = usage_http_client();
-        let mut req = client
-            .get(&url)
-            .header(
-                "Authorization",
-                crate::agent_identity::authorization_header_value(bearer),
-            );
+        let mut req = client.get(&url).header(
+            "Authorization",
+            crate::agent_identity::authorization_header_value(bearer),
+        );
         let request_headers = build_usage_request_headers(workspace_id);
         if !request_headers.is_empty() {
             req = req.headers(request_headers);

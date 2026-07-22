@@ -66,6 +66,12 @@ pub(super) fn mark_usage_unreachable_if_needed(storage: &Storage, account_id: &s
     if mark_account_unavailable_for_deactivation_error(storage, account_id, err) {
         return;
     }
+    if crate::agent_identity::is_agent_identity_account(storage, account_id).unwrap_or(false)
+        && extract_usage_status_code(&err.trim().to_ascii_lowercase())
+            .is_some_and(|status| matches!(status, 401 | 403))
+    {
+        return;
+    }
     let _ = mark_account_unavailable_for_usage_http_error(storage, account_id, err);
 }
 

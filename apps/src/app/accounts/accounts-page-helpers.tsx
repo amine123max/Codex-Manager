@@ -628,6 +628,8 @@ export function AccountInfoCell({
   const statusReasonLabel = formatAccountStatusReasonLabel(account, t);
   const tagsText = formatAccountTags(account.tags);
   const noteText = String(account.note || "").trim();
+  const isAgentIdentity =
+    String(account.authMode || "").toLowerCase() === "agentidentity";
 
   return (
     <Tooltip>
@@ -644,15 +646,13 @@ export function AccountInfoCell({
               <BrainCircuit className="h-2.5 w-2.5" />
               OpenAI
             </Badge>
-            {String(account.authMode || "").toLowerCase() === "agentidentity" ? (
-              <Badge
-                variant="secondary"
-                className="h-4 shrink-0 gap-0.5 bg-teal-500/10 px-1.5 text-[9px] text-teal-700 dark:text-teal-300"
-              >
-                <KeyRound className="h-2.5 w-2.5" />
-                Agent Identity
-              </Badge>
-            ) : null}
+            <Badge
+              variant="secondary"
+              className="h-4 shrink-0 gap-0.5 bg-teal-500/10 px-1.5 text-[9px] text-teal-700 dark:text-teal-300"
+            >
+              <KeyRound className="h-2.5 w-2.5" />
+              {isAgentIdentity ? "Agent Identity" : "OAuth"}
+            </Badge>
             {accountPlanLabel ? (
               <Badge
                 variant="secondary"

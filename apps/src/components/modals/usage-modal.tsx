@@ -1,14 +1,10 @@
 "use client";
 
 import {
-  Calendar,
-  Clock,
   Database,
   KeyRound,
   ShieldAlert,
-  type LucideIcon,
   RefreshCw,
-  Zap,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -28,7 +24,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import {
   formatAccountSubscriptionPlanLabel,
@@ -36,10 +31,6 @@ import {
 } from "@/app/accounts/accounts-page-helpers";
 import {
   formatTsFromSeconds,
-  getExtraUsageDisplayRows,
-  getUsageDisplayBuckets,
-  isPrimaryWindowOnlyUsage,
-  isSecondaryWindowOnlyUsage,
 } from "@/lib/utils/usage";
 import { Account } from "@/types";
 import { useI18n } from "@/lib/i18n/provider";
@@ -52,106 +43,6 @@ interface UsageModalProps {
   onRefreshRt: (id: string) => void;
   isRefreshing: boolean;
   isRefreshingRt: boolean;
-}
-
-interface UsageDetailRowProps {
-  label: string;
-  remainPercent: number | null;
-  resetsAt: number | null | undefined;
-  icon: LucideIcon;
-  tone: "green" | "blue" | "amber";
-  caption?: string;
-  emptyText?: string;
-  emptyResetText?: string;
-}
-
-/**
- * 函数 `UsageDetailRow`
- *
- * 作者: gaohongshun
- *
- * 时间: 2026-04-02
- *
- * # 参数
- * - params: 参数 params
- *
- * # 返回
- * 返回函数执行结果
- */
-function UsageDetailRow({
-  label,
-  remainPercent,
-  resetsAt,
-  icon: Icon,
-  tone,
-  caption,
-  emptyText = "--",
-  emptyResetText = "未知",
-}: UsageDetailRowProps) {
-  const { t } = useI18n();
-  const value = remainPercent ?? 0;
-  const toneClasses = {
-    blue: {
-      icon: "bg-blue-500/10 text-blue-500",
-      track: "bg-blue-500/20",
-      indicator: "bg-blue-500",
-    },
-    green: {
-      icon: "bg-green-500/10 text-green-500",
-      track: "bg-green-500/20",
-      indicator: "bg-green-500",
-    },
-    amber: {
-      icon: "bg-amber-500/10 text-amber-500",
-      track: "bg-amber-500/20",
-      indicator: "bg-amber-500",
-    },
-  } as const;
-  const palette = toneClasses[tone];
-
-  return (
-    <Card size="sm">
-      <CardContent className="grid gap-2">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className={cn("rounded-lg p-1.5", palette.icon)}>
-            <Icon className="h-3.5 w-3.5" />
-          </div>
-          <div className="min-w-0 space-y-0.5">
-            <span className="block truncate font-medium">{label}</span>
-            {caption ? (
-              <span className="block text-[10px] text-muted-foreground">{caption}</span>
-            ) : null}
-          </div>
-        </div>
-        <div className="shrink-0 text-right">
-          <span className="text-base font-semibold">
-            {remainPercent == null ? emptyText : `${value}%`}
-          </span>
-          <span className="ml-1 text-xs text-muted-foreground">
-            {remainPercent == null ? "" : t("剩余")}
-          </span>
-        </div>
-      </div>
-
-      <Progress
-        value={value}
-        trackClassName={palette.track}
-        indicatorClassName={palette.indicator}
-      />
-
-      <div className="flex items-center justify-between gap-3 text-[10px] text-muted-foreground">
-        <span className="shrink-0">
-          {t("已使用")} {remainPercent == null ? "--" : `${Math.max(0, 100 - value)}%`}
-        </span>
-        <span className="flex min-w-0 items-center justify-end gap-1 text-right">
-          <Clock className="h-2.5 w-2.5" />
-          {t("重置时间:")} {formatTsFromSeconds(resetsAt, t(emptyResetText))}
-        </span>
-      </div>
-      </CardContent>
-    </Card>
-  );
 }
 
 export default function UsageModal({
@@ -167,17 +58,13 @@ export default function UsageModal({
   if (!account) return null;
   const subscriptionStatusLabel = formatAccountSubscriptionStatusLabel(account, t);
   const subscriptionPlanLabel = formatAccountSubscriptionPlanLabel(account, t);
-  const primaryWindowOnly = isPrimaryWindowOnlyUsage(account.usage);
-  const secondaryWindowOnly = isSecondaryWindowOnlyUsage(account.usage);
-  const usageBuckets = getUsageDisplayBuckets(account.usage);
-  const extraUsageRows = getExtraUsageDisplayRows(account.usage);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="glass-card grid-rows-[auto_minmax(0,1fr)_auto] p-6"
         style={{
-          height: "min(680px, calc(100vh - 2rem))",
+          maxHeight: "calc(100vh - 2rem)",
           maxWidth: "none",
           width: "min(700px, calc(100vw - 2rem))",
         }}
@@ -266,55 +153,6 @@ export default function UsageModal({
                     </div>
                   </CardContent>
                 </Card>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card size="sm">
-            <CardHeader>
-              <CardTitle>{t("额度窗口")}</CardTitle>
-              <CardDescription>
-                {t("标准 5 小时、7 天周期，以及像 Code Review / Spark 这类专属额度都会在这里按单列依次显示。")}
-              </CardDescription>
-            </CardHeader>
-
-            <CardContent>
-              <div className="grid gap-3 sm:grid-cols-2">
-              <UsageDetailRow
-                label={t("5小时额度")}
-                remainPercent={usageBuckets.primaryRemainPercent}
-                resetsAt={usageBuckets.primaryResetsAt}
-                icon={Clock}
-                tone="green"
-                caption={t("标准模型窗口")}
-                emptyText={secondaryWindowOnly ? t("未提供") : "--"}
-                emptyResetText={secondaryWindowOnly ? t("未提供") : t("未知")}
-              />
-
-              <UsageDetailRow
-                label={t("7天周期额度")}
-                remainPercent={usageBuckets.secondaryRemainPercent}
-                resetsAt={usageBuckets.secondaryResetsAt}
-                icon={Calendar}
-                tone="blue"
-                caption={t("长周期窗口")}
-                emptyText={primaryWindowOnly ? t("未提供") : "--"}
-                emptyResetText={primaryWindowOnly ? t("未提供") : t("未知")}
-              />
-
-              {extraUsageRows.map((item) => (
-                <UsageDetailRow
-                  key={item.id}
-                  label={`${t(item.label, item.labelValues)}${item.labelSuffix ? t(item.labelSuffix) : ""}`}
-                  remainPercent={item.remainPercent}
-                  resetsAt={item.resetsAt}
-                  icon={Zap}
-                  tone="amber"
-                  caption={t(item.windowLabel, item.windowLabelValues)}
-                  emptyText="--"
-                  emptyResetText={t("未知")}
-                />
-              ))}
               </div>
             </CardContent>
           </Card>

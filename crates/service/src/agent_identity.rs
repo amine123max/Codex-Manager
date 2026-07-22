@@ -7,6 +7,8 @@ use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 use std::collections::HashMap;
+#[cfg(test)]
+use std::sync::RwLock;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -15,6 +17,14 @@ const AGENT_IDENTITY_TASK_REGISTRATION_TIMEOUT: Duration = Duration::from_secs(3
 
 static AGENT_IDENTITY_TASK_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
     OnceLock::new();
+#[cfg(test)]
+static AGENT_IDENTITY_AUTH_BASE_URL_OVERRIDE: OnceLock<RwLock<Option<String>>> = OnceLock::new();
+
+#[derive(Debug, Clone)]
+pub(crate) struct ChatgptAuthorization {
+    pub(crate) credential: String,
+    pub(crate) agent_identity_task_id: Option<String>,
+}
 
 #[derive(Debug, Serialize)]
 struct AgentAssertionEnvelope<'a> {
@@ -41,19 +51,51 @@ pub(crate) fn resolve_chatgpt_authorization(
     account_id: &str,
     token: &Token,
 ) -> Result<String, String> {
-    if storage
-        .find_account_agent_identity(account_id)
-        .map_err(|err| err.to_string())?
-        .is_some()
-    {
-        return build_account_agent_assertion(storage, account_id);
+    resolve_chatgpt_authorization_context(storage, account_id, token)
+        .map(|authorization| authorization.credential)
+}
+
+pub(crate) fn resolve_chatgpt_authorization_context(
+    storage: &Storage,
+    account_id: &str,
+    token: &Token,
+) -> Result<ChatgptAuthorization, String> {
+    if is_agent_identity_account(storage, account_id)? {
+        ensure_agent_identity_task(storage, account_id, None)?;
+        let identity = storage
+            .find_account_agent_identity(account_id)
+            .map_err(|err| err.to_string())?
+            .ok_or_else(|| "agent identity credentials are unavailable".to_string())?;
+        let task_id = identity
+            .task_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        return Ok(ChatgptAuthorization {
+            credential: build_agent_assertion(&identity, chrono::Utc::now())?,
+            agent_identity_task_id: task_id,
+        });
     }
 
     let access_token = token.access_token.trim();
     if access_token.is_empty() {
         return Err("missing chatgpt access token".to_string());
     }
-    Ok(access_token.to_string())
+    Ok(ChatgptAuthorization {
+        credential: access_token.to_string(),
+        agent_identity_task_id: None,
+    })
+}
+
+pub(crate) fn is_agent_identity_account(
+    storage: &Storage,
+    account_id: &str,
+) -> Result<bool, String> {
+    storage
+        .find_account_agent_identity(account_id)
+        .map(|identity| identity.is_some())
+        .map_err(|err| err.to_string())
 }
 
 pub(crate) fn authorization_header_value(credential: &str) -> String {
@@ -65,29 +107,24 @@ pub(crate) fn authorization_header_value(credential: &str) -> String {
     }
 }
 
-pub(crate) fn build_account_agent_assertion(
+pub(crate) fn recover_agent_identity_task(
     storage: &Storage,
     account_id: &str,
-) -> Result<String, String> {
-    ensure_agent_identity_task(storage, account_id)?;
-    let identity = storage
-        .find_account_agent_identity(account_id)
-        .map_err(|err| err.to_string())?
-        .ok_or_else(|| "agent identity credentials are unavailable".to_string())?;
-    build_agent_assertion(&identity, chrono::Utc::now())
+    expected_task_id: &str,
+) -> Result<(), String> {
+    ensure_agent_identity_task(storage, account_id, Some(expected_task_id))
 }
 
-fn ensure_agent_identity_task(storage: &Storage, account_id: &str) -> Result<(), String> {
+fn ensure_agent_identity_task(
+    storage: &Storage,
+    account_id: &str,
+    expected_task_id: Option<&str>,
+) -> Result<(), String> {
     let identity = storage
         .find_account_agent_identity(account_id)
         .map_err(|err| err.to_string())?
         .ok_or_else(|| "agent identity credentials are unavailable".to_string())?;
-    if identity
-        .task_id
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
-    {
+    if should_keep_agent_identity_task(identity.task_id.as_deref(), expected_task_id) {
         return Ok(());
     }
 
@@ -97,12 +134,7 @@ fn ensure_agent_identity_task(storage: &Storage, account_id: &str) -> Result<(),
         .find_account_agent_identity(account_id)
         .map_err(|err| err.to_string())?
         .ok_or_else(|| "agent identity credentials are unavailable".to_string())?;
-    if refreshed
-        .task_id
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
-    {
+    if should_keep_agent_identity_task(refreshed.task_id.as_deref(), expected_task_id) {
         return Ok(());
     }
 
@@ -110,6 +142,51 @@ fn ensure_agent_identity_task(storage: &Storage, account_id: &str) -> Result<(),
     storage
         .update_account_agent_identity_task(account_id, &task_id)
         .map_err(|err| err.to_string())
+}
+
+fn should_keep_agent_identity_task(
+    current_task_id: Option<&str>,
+    expected_task_id: Option<&str>,
+) -> bool {
+    let current = current_task_id.unwrap_or_default().trim();
+    if current.is_empty() {
+        return false;
+    }
+    match expected_task_id.map(str::trim) {
+        Some(expected) => current != expected,
+        None => true,
+    }
+}
+
+pub(crate) fn is_agent_identity_task_invalid_error(err: &str) -> bool {
+    let lower = err.trim().to_ascii_lowercase();
+    if !lower.contains("401") && !lower.contains("unauthorized") {
+        return false;
+    }
+    let compact: String = lower
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect();
+    [
+        "\"code\":\"invalid_task_id\"",
+        "\"code\":\"task_not_found\"",
+        "\"code\":\"task_expired\"",
+        "\"error\":\"invalid_task_id\"",
+    ]
+    .iter()
+    .any(|marker| compact.contains(marker))
+        || [
+            "invalid task_id",
+            "invalid task id",
+            "task_id is invalid",
+            "task id is invalid",
+            "task not found",
+            "task expired",
+            "unknown task_id",
+            "unknown task id",
+        ]
+        .iter()
+        .any(|marker| lower.contains(marker))
 }
 
 fn account_task_lock(account_id: &str) -> Arc<Mutex<()>> {
@@ -174,7 +251,7 @@ fn register_agent_identity_task(identity: &AccountAgentIdentity) -> Result<Strin
     let (timestamp, signature) = sign_agent_task_registration(identity, chrono::Utc::now())?;
     let url = format!(
         "{}/v1/agent/{}/task/register",
-        AGENT_IDENTITY_AUTH_BASE_URL.trim_end_matches('/'),
+        agent_identity_auth_base_url().trim_end_matches('/'),
         identity.agent_runtime_id.trim()
     );
     let mut client_builder =
@@ -216,6 +293,30 @@ fn register_agent_identity_task(identity: &AccountAgentIdentity) -> Result<Strin
         return Err("agent task registration response omitted task id".to_string());
     }
     decrypt_agent_task_id(identity, &result.encrypted_task_id)
+}
+
+fn agent_identity_auth_base_url() -> String {
+    #[cfg(test)]
+    {
+        if let Some(value) = AGENT_IDENTITY_AUTH_BASE_URL_OVERRIDE
+            .get_or_init(|| RwLock::new(None))
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+        {
+            return value;
+        }
+    }
+    AGENT_IDENTITY_AUTH_BASE_URL.to_string()
+}
+
+#[cfg(test)]
+pub(crate) fn set_agent_identity_auth_base_url_for_tests(value: Option<String>) -> Option<String> {
+    let lock = AGENT_IDENTITY_AUTH_BASE_URL_OVERRIDE.get_or_init(|| RwLock::new(None));
+    let mut current = lock
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    std::mem::replace(&mut *current, value)
 }
 
 fn decrypt_agent_task_id(identity: &AccountAgentIdentity, encoded: &str) -> Result<String, String> {

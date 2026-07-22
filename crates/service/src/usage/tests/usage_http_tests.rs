@@ -485,7 +485,19 @@ fn usage_request_headers_use_official_chatgpt_account_header_name() {
             .and_then(|value| value.to_str().ok()),
         Some("workspace_123")
     );
-    assert_eq!(headers.len(), 1);
+    assert_eq!(
+        headers.get("openai-beta").and_then(|value| value.to_str().ok()),
+        Some("codex-1")
+    );
+    assert_eq!(
+        headers.get("oai-language").and_then(|value| value.to_str().ok()),
+        Some("zh-CN")
+    );
+    assert_eq!(
+        headers.get("priority").and_then(|value| value.to_str().ok()),
+        Some("u=4, i")
+    );
+    assert_eq!(headers.len(), 8);
 }
 
 /// 函数 `subscription_request_uses_only_authorization_without_custom_usage_headers`

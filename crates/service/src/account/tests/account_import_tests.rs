@@ -93,6 +93,72 @@ fn agent_identity_value(
 }
 
 #[test]
+fn real_sub2api_agent_identity_export_imports_when_configured() {
+    let Ok(path) = std::env::var("CODEXMANAGER_TEST_SUB2API_EXPORT_PATH") else {
+        return;
+    };
+    let content = std::fs::read_to_string(&path).expect("read configured sub2api export");
+    let items = parse_items_from_content(&content).expect("parse configured sub2api export");
+    assert!(
+        !items.is_empty(),
+        "configured sub2api export has no accounts"
+    );
+
+    let storage = Storage::open_in_memory().expect("open storage");
+    storage.init().expect("initialize storage");
+    let mut index = ExistingAccountIndex::build(&storage).expect("build account index");
+    for (offset, item) in items.iter().enumerate() {
+        import_single_item(&storage, &mut index, item, offset + 1)
+            .unwrap_or_else(|err| panic!("import configured account {}: {err}", offset + 1));
+    }
+
+    let identities = storage
+        .list_account_agent_identities()
+        .expect("list imported agent identities");
+    assert!(
+        !identities.is_empty(),
+        "no Agent Identity credentials imported"
+    );
+    for identity in identities {
+        assert!(!identity.agent_runtime_id.trim().is_empty());
+        assert!(!identity.agent_private_key.trim().is_empty());
+        assert!(!identity.chatgpt_user_id.trim().is_empty());
+        assert!(identity
+            .task_id
+            .as_deref()
+            .is_some_and(|task| !task.trim().is_empty()));
+        let account = storage
+            .find_account_by_id(&identity.account_id)
+            .expect("load imported account")
+            .expect("imported account exists");
+        assert!(
+            account.label.contains('@'),
+            "imported account label is not an email"
+        );
+        let subscription = storage
+            .find_account_subscription(&identity.account_id)
+            .expect("load imported subscription")
+            .expect("imported subscription exists");
+        assert_eq!(subscription.plan_type.as_deref(), Some("k12"));
+        let token = storage
+            .find_token_by_account_id(&identity.account_id)
+            .expect("load imported token")
+            .expect("imported token exists");
+        let authorization = crate::agent_identity::resolve_chatgpt_authorization_context(
+            &storage,
+            &identity.account_id,
+            &token,
+        )
+        .expect("build Agent Identity authorization");
+        assert!(authorization.credential.starts_with("AgentAssertion "));
+        assert_eq!(
+            authorization.agent_identity_task_id.as_deref(),
+            identity.task_id.as_deref()
+        );
+    }
+}
+
+#[test]
 fn import_agent_identity_without_oauth_token_persists_credentials_and_plan() {
     let storage = Storage::open_in_memory().expect("open storage");
     storage.init().expect("init storage");

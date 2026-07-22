@@ -1,7 +1,57 @@
 use super::{
-    classify_usage_refresh_error, should_record_failure_event_with_state, FailureThrottleKey,
+    classify_usage_refresh_error, mark_usage_unreachable_if_needed,
+    should_record_failure_event_with_state, FailureThrottleKey,
 };
+use codexmanager_core::storage::{now_ts, Account, AccountAgentIdentity, Storage};
 use std::collections::HashMap;
+
+#[test]
+fn agent_identity_usage_401_does_not_disable_account() {
+    let storage = Storage::open_in_memory().expect("open storage");
+    storage.init().expect("initialize storage");
+    let now = now_ts();
+    storage
+        .insert_account(&Account {
+            id: "agent-401".to_string(),
+            label: "agent@example.com".to_string(),
+            issuer: "https://auth.openai.com".to_string(),
+            chatgpt_account_id: Some("team-agent".to_string()),
+            workspace_id: Some("team-agent".to_string()),
+            group_name: None,
+            sort: 0,
+            status: "active".to_string(),
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("insert account");
+    storage
+        .upsert_account_agent_identity(&AccountAgentIdentity {
+            account_id: "agent-401".to_string(),
+            agent_runtime_id: "runtime-agent".to_string(),
+            agent_private_key: "private-key".to_string(),
+            task_id: Some("task-agent".to_string()),
+            chatgpt_user_id: "user-agent".to_string(),
+            chatgpt_account_is_fedramp: false,
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("insert agent identity");
+
+    mark_usage_unreachable_if_needed(
+        &storage,
+        "agent-401",
+        "usage endpoint failed: status=401 Unauthorized body=some non-task 401",
+    );
+
+    assert_eq!(
+        storage
+            .find_account_by_id("agent-401")
+            .expect("load account")
+            .expect("account exists")
+            .status,
+        "active"
+    );
+}
 
 /// 函数 `usage_refresh_error_class_groups_by_status_code`
 ///

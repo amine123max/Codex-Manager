@@ -545,15 +545,19 @@ fn consume_rate_limit_reset_for_token(
     let mut active_workspace_id = clean_header_value(resolved_workspace_id);
     let mut active_subscription_account_id =
         clean_header_value(derived_chatgpt_id.or_else(|| active_workspace_id.clone()));
-    let mut bearer = crate::agent_identity::resolve_chatgpt_authorization(
+    let mut authorization = crate::agent_identity::resolve_chatgpt_authorization_context(
         storage,
         &current.account_id,
         &current,
     )?;
 
-    if let Err(err) =
-        consume_rate_limit_reset_credit(&base_url, &bearer, active_workspace_id.as_deref())
-    {
+    if let Err(err) = consume_rate_limit_reset_with_agent_recovery(
+        storage,
+        &current.account_id,
+        &base_url,
+        &mut authorization,
+        active_workspace_id.as_deref(),
+    ) {
         if should_retry_usage_refresh_with_token(&current, &err) {
             if let Err(refresh_err) = refresh_and_persist_access_token(
                 storage,
@@ -576,14 +580,18 @@ fn consume_rate_limit_reset_for_token(
                 clean_header_value(refreshed_workspace_id.or_else(|| refreshed_chatgpt_id.clone()));
             active_subscription_account_id =
                 clean_header_value(refreshed_chatgpt_id.or_else(|| active_workspace_id.clone()));
-            bearer = crate::agent_identity::resolve_chatgpt_authorization(
+            authorization = crate::agent_identity::resolve_chatgpt_authorization_context(
                 storage,
                 &current.account_id,
                 &current,
             )?;
-            if let Err(reset_err) =
-                consume_rate_limit_reset_credit(&base_url, &bearer, active_workspace_id.as_deref())
-            {
+            if let Err(reset_err) = consume_rate_limit_reset_with_agent_recovery(
+                storage,
+                &current.account_id,
+                &base_url,
+                &mut authorization,
+                active_workspace_id.as_deref(),
+            ) {
                 mark_usage_unreachable_if_needed(storage, &current.account_id, &reset_err);
                 return Err(reset_err);
             }
@@ -597,7 +605,7 @@ fn consume_rate_limit_reset_for_token(
         storage,
         &current.account_id,
         &base_url,
-        &bearer,
+        &mut authorization,
         active_workspace_id.as_deref(),
         active_subscription_account_id.as_deref(),
     ) {
@@ -685,7 +693,7 @@ fn refresh_usage_for_token(
     let resolved_workspace_id = clean_header_value(resolved_workspace_id);
     let resolved_subscription_account_id =
         clean_header_value(derived_chatgpt_id.or_else(|| resolved_workspace_id.clone()));
-    let bearer = crate::agent_identity::resolve_chatgpt_authorization(
+    let mut authorization = crate::agent_identity::resolve_chatgpt_authorization_context(
         storage,
         &current.account_id,
         &current,
@@ -695,7 +703,7 @@ fn refresh_usage_for_token(
         storage,
         &current.account_id,
         &base_url,
-        &bearer,
+        &mut authorization,
         resolved_workspace_id.as_deref(),
         resolved_subscription_account_id.as_deref(),
     ) {
@@ -732,7 +740,7 @@ fn refresh_usage_for_token(
                 clean_header_value(refreshed_workspace_id.or_else(|| refreshed_chatgpt_id.clone()));
             let refreshed_subscription_account_id =
                 clean_header_value(refreshed_chatgpt_id.or_else(|| refreshed_workspace_id.clone()));
-            let bearer = crate::agent_identity::resolve_chatgpt_authorization(
+            let mut authorization = crate::agent_identity::resolve_chatgpt_authorization_context(
                 storage,
                 &current.account_id,
                 &current,
@@ -741,7 +749,7 @@ fn refresh_usage_for_token(
                 storage,
                 &current.account_id,
                 &base_url,
-                &bearer,
+                &mut authorization,
                 refreshed_workspace_id.as_deref(),
                 refreshed_subscription_account_id.as_deref(),
             ) {
@@ -763,29 +771,100 @@ fn refresh_account_snapshot(
     storage: &Storage,
     account_id: &str,
     base_url: &str,
-    bearer: &str,
+    authorization: &mut crate::agent_identity::ChatgptAuthorization,
     workspace_id: Option<&str>,
     subscription_account_id: Option<&str>,
 ) -> Result<UsageAvailabilityStatus, String> {
-    if let Some(subscription_account_id) = subscription_account_id {
-        let subscription =
-            fetch_account_subscription(base_url, bearer, subscription_account_id, workspace_id)?;
-        storage
-            .upsert_account_subscription(
-                account_id,
-                subscription.has_subscription,
-                subscription.account_plan_type.as_deref(),
-                subscription.plan_type.as_deref(),
-                subscription.expires_at,
-                subscription.renews_at,
-            )
-            .map_err(|err| format!("store account subscription failed: {err}"))?;
+    if authorization.agent_identity_task_id.is_none() {
+        if let Some(subscription_account_id) = subscription_account_id {
+            let subscription = fetch_account_subscription(
+                base_url,
+                &authorization.credential,
+                subscription_account_id,
+                workspace_id,
+            )?;
+            storage
+                .upsert_account_subscription(
+                    account_id,
+                    subscription.has_subscription,
+                    subscription.account_plan_type.as_deref(),
+                    subscription.plan_type.as_deref(),
+                    subscription.expires_at,
+                    subscription.renews_at,
+                )
+                .map_err(|err| format!("store account subscription failed: {err}"))?;
+        }
     }
 
-    let value = fetch_usage_snapshot(base_url, bearer, workspace_id)?;
+    let value = fetch_usage_snapshot_with_agent_recovery(
+        storage,
+        account_id,
+        base_url,
+        authorization,
+        workspace_id,
+    )?;
     let status = classify_usage_status_from_snapshot_value(&value);
     store_usage_snapshot(storage, account_id, value)?;
     Ok(status)
+}
+
+fn fetch_usage_snapshot_with_agent_recovery(
+    storage: &Storage,
+    account_id: &str,
+    base_url: &str,
+    authorization: &mut crate::agent_identity::ChatgptAuthorization,
+    workspace_id: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    match fetch_usage_snapshot(base_url, &authorization.credential, workspace_id) {
+        Ok(value) => Ok(value),
+        Err(err)
+            if authorization.agent_identity_task_id.is_some()
+                && crate::agent_identity::is_agent_identity_task_invalid_error(&err) =>
+        {
+            refresh_agent_identity_authorization(storage, account_id, authorization)?;
+            fetch_usage_snapshot(base_url, &authorization.credential, workspace_id)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn consume_rate_limit_reset_with_agent_recovery(
+    storage: &Storage,
+    account_id: &str,
+    base_url: &str,
+    authorization: &mut crate::agent_identity::ChatgptAuthorization,
+    workspace_id: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    match consume_rate_limit_reset_credit(base_url, &authorization.credential, workspace_id) {
+        Ok(value) => Ok(value),
+        Err(err)
+            if authorization.agent_identity_task_id.is_some()
+                && crate::agent_identity::is_agent_identity_task_invalid_error(&err) =>
+        {
+            refresh_agent_identity_authorization(storage, account_id, authorization)?;
+            consume_rate_limit_reset_credit(base_url, &authorization.credential, workspace_id)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn refresh_agent_identity_authorization(
+    storage: &Storage,
+    account_id: &str,
+    authorization: &mut crate::agent_identity::ChatgptAuthorization,
+) -> Result<(), String> {
+    let expected_task_id = authorization
+        .agent_identity_task_id
+        .as_deref()
+        .ok_or_else(|| "agent identity task id is unavailable".to_string())?;
+    crate::agent_identity::recover_agent_identity_task(storage, account_id, expected_task_id)?;
+    let token = storage
+        .find_token_by_account_id(account_id)
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| "account token not found".to_string())?;
+    *authorization =
+        crate::agent_identity::resolve_chatgpt_authorization_context(storage, account_id, &token)?;
+    Ok(())
 }
 
 #[cfg(test)]

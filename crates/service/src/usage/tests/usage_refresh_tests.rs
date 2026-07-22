@@ -1,15 +1,200 @@
 use super::{
     clear_pending_usage_refresh_tasks_for_tests, enqueue_usage_refresh_with_worker,
-    next_usage_poll_cursor, notify_usage_refresh_completed, reset_usage_poll_cursor_for_tests,
-    resolve_token_refresh_issuer, run_token_refresh_task, set_usage_refresh_completed_handler,
-    should_retry_usage_refresh_with_token, subscribe_usage_refresh_completed,
-    token_refresh_access_exp_cutoff, token_refresh_due_cutoff, token_refresh_schedule,
-    usage_poll_batch_indices,
+    next_usage_poll_cursor, notify_usage_refresh_completed, refresh_account_snapshot,
+    reset_usage_poll_cursor_for_tests, resolve_token_refresh_issuer, run_token_refresh_task,
+    set_usage_refresh_completed_handler, should_retry_usage_refresh_with_token,
+    subscribe_usage_refresh_completed, token_refresh_access_exp_cutoff, token_refresh_due_cutoff,
+    token_refresh_schedule, usage_poll_batch_indices,
 };
-use codexmanager_core::storage::{now_ts, Account, Storage, Token};
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use base64::Engine;
+use codexmanager_core::storage::{now_ts, Account, AccountAgentIdentity, Storage, Token};
+use ed25519_dalek::pkcs8::EncodePrivateKey;
+use ed25519_dalek::SigningKey;
 use std::collections::HashSet;
 use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
+use tiny_http::{Header, Response, Server, StatusCode};
+
+struct AgentIdentityAuthBaseGuard(Option<String>);
+
+impl Drop for AgentIdentityAuthBaseGuard {
+    fn drop(&mut self) {
+        crate::agent_identity::set_agent_identity_auth_base_url_for_tests(self.0.take());
+    }
+}
+
+fn agent_assertion_task_id(authorization: &str) -> String {
+    let encoded = authorization
+        .strip_prefix("AgentAssertion ")
+        .expect("agent assertion scheme");
+    let payload = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .expect("decode assertion envelope");
+    serde_json::from_slice::<serde_json::Value>(&payload)
+        .expect("parse assertion envelope")
+        .get("task_id")
+        .and_then(serde_json::Value::as_str)
+        .expect("assertion task id")
+        .to_string()
+}
+
+#[test]
+fn agent_identity_usage_skips_oauth_subscription_and_recovers_invalid_task_once() {
+    let _guard = crate::test_env_guard();
+    let _ = crate::usage_http::usage_http_client();
+    let storage = Storage::open_in_memory().expect("open in-memory storage");
+    storage.init().expect("initialize storage");
+    let now = now_ts();
+    let account_id = "agent-usage-recovery";
+    storage
+        .insert_account(&Account {
+            id: account_id.to_string(),
+            label: "agent@example.com".to_string(),
+            issuer: "https://auth.openai.com".to_string(),
+            chatgpt_account_id: Some("team-agent".to_string()),
+            workspace_id: Some("team-agent".to_string()),
+            group_name: None,
+            sort: 0,
+            status: "unavailable".to_string(),
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("insert account");
+    let token = Token {
+        account_id: account_id.to_string(),
+        id_token: String::new(),
+        access_token: String::new(),
+        refresh_token: String::new(),
+        api_key_access_token: None,
+        last_refresh: now,
+    };
+    storage.insert_token(&token).expect("insert token");
+    let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
+    let private_key = STANDARD.encode(
+        signing_key
+            .to_pkcs8_der()
+            .expect("encode private key")
+            .as_bytes(),
+    );
+    storage
+        .upsert_account_agent_identity(&AccountAgentIdentity {
+            account_id: account_id.to_string(),
+            agent_runtime_id: "runtime-agent".to_string(),
+            agent_private_key: private_key,
+            task_id: Some("old-task".to_string()),
+            chatgpt_user_id: "user-agent".to_string(),
+            chatgpt_account_is_fedramp: false,
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("insert agent identity");
+
+    let registration_server = Server::http("127.0.0.1:0").expect("start registration server");
+    let registration_base_url = format!("http://{}", registration_server.server_addr());
+    let previous = crate::agent_identity::set_agent_identity_auth_base_url_for_tests(Some(
+        registration_base_url,
+    ));
+    let _registration_guard = AgentIdentityAuthBaseGuard(previous);
+    let registration_join = thread::spawn(move || {
+        let request = registration_server
+            .recv_timeout(Duration::from_secs(5))
+            .expect("registration server timeout")
+            .expect("receive registration request");
+        assert_eq!(request.url(), "/v1/agent/runtime-agent/task/register");
+        request
+            .respond(
+                Response::from_string(r#"{"task_id":"new-task"}"#)
+                    .with_status_code(StatusCode(200))
+                    .with_header(
+                        Header::from_bytes("Content-Type", "application/json")
+                            .expect("content type header"),
+                    ),
+            )
+            .expect("respond registration request");
+    });
+
+    let usage_server = Server::http("127.0.0.1:0").expect("start usage server");
+    let usage_base_url = format!("http://{}", usage_server.server_addr());
+    let (auth_tx, auth_rx) = mpsc::channel();
+    let usage_join = thread::spawn(move || {
+        for attempt in 0..2 {
+            let request = usage_server
+                .recv_timeout(Duration::from_secs(5))
+                .expect("usage server timeout")
+                .expect("receive usage request");
+            assert_eq!(request.url(), "/api/codex/usage");
+            let authorization = request
+                .headers()
+                .iter()
+                .find(|header| header.field.equiv("Authorization"))
+                .map(|header| header.value.as_str().to_string())
+                .expect("authorization header");
+            auth_tx
+                .send(agent_assertion_task_id(&authorization))
+                .expect("record assertion task id");
+            let response = if attempt == 0 {
+                Response::from_string(r#"{"error":{"code":"invalid_task_id"}}"#)
+                    .with_status_code(StatusCode(401))
+            } else {
+                Response::from_string(
+                    r#"{"rate_limit":{"primary_window":{"used_percent":25.0,"limit_window_seconds":18000,"reset_at":1776655889}}}"#,
+                )
+                .with_status_code(StatusCode(200))
+            }
+            .with_header(
+                Header::from_bytes("Content-Type", "application/json")
+                    .expect("content type header"),
+            );
+            request.respond(response).expect("respond usage request");
+        }
+    });
+
+    let mut authorization =
+        crate::agent_identity::resolve_chatgpt_authorization_context(&storage, account_id, &token)
+            .expect("resolve initial agent assertion");
+    refresh_account_snapshot(
+        &storage,
+        account_id,
+        &usage_base_url,
+        &mut authorization,
+        Some("team-agent"),
+        Some("team-agent"),
+    )
+    .expect("refresh agent identity usage");
+
+    usage_join.join().expect("join usage server");
+    registration_join.join().expect("join registration server");
+    assert_eq!(
+        auth_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("old task"),
+        "old-task"
+    );
+    assert_eq!(
+        auth_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("new task"),
+        "new-task"
+    );
+    assert_eq!(
+        storage
+            .find_account_agent_identity(account_id)
+            .expect("load agent identity")
+            .and_then(|identity| identity.task_id)
+            .as_deref(),
+        Some("new-task")
+    );
+    assert_eq!(
+        storage
+            .find_account_by_id(account_id)
+            .expect("load account")
+            .expect("account exists")
+            .status,
+        "active"
+    );
+}
 
 #[test]
 fn usage_refresh_completed_handler_receives_notification() {
