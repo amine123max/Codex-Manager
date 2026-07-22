@@ -468,6 +468,10 @@ impl Storage {
             "DELETE FROM account_subscriptions WHERE account_id = ?1",
             [account_id],
         )?;
+        tx.execute(
+            "DELETE FROM account_agent_identities WHERE account_id = ?1",
+            [account_id],
+        )?;
         tx.execute("DELETE FROM tokens WHERE account_id = ?1", [account_id])?;
         tx.execute(
             "DELETE FROM usage_snapshots WHERE account_id = ?1",

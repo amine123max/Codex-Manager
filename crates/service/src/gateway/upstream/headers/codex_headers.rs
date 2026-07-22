@@ -120,7 +120,7 @@ pub(crate) fn build_codex_upstream_headers(
     let mut headers = Vec::with_capacity(16);
     headers.push((
         "Authorization".to_string(),
-        format!("Bearer {}", input.auth_token),
+        crate::agent_identity::authorization_header_value(input.auth_token),
     ));
     if let Some(account_id) = input
         .chatgpt_account_id
@@ -264,7 +264,7 @@ pub(crate) fn build_codex_compact_upstream_headers(
     let mut headers = Vec::with_capacity(13);
     headers.push((
         "Authorization".to_string(),
-        format!("Bearer {}", input.auth_token),
+        crate::agent_identity::authorization_header_value(input.auth_token),
     ));
     if let Some(account_id) = input
         .chatgpt_account_id

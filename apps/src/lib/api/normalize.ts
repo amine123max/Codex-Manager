@@ -423,6 +423,7 @@ export function normalizeAccount(item: unknown, usage?: AccountUsage | null): Ac
     status,
     statusReason,
     hasToken,
+    authMode: asString(source.authMode ?? source.auth_mode) || null,
     planType:
       asString(source.planType ?? source.plan_type ?? source.subscriptionPlan ?? source.subscription_plan) ||
       null,

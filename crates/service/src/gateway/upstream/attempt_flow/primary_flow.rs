@@ -21,6 +21,12 @@ pub(in crate::gateway::upstream) enum PrimaryFlowDecision {
     },
 }
 
+#[cfg(test)]
+fn resolve_chatgpt_primary_bearer(token: &Token) -> Option<String> {
+    let access = token.access_token.trim();
+    (!access.is_empty()).then(|| access.to_string())
+}
+
 /// 函数 `resolve_chatgpt_primary_bearer`
 ///
 /// 作者: gaohongshun
@@ -32,15 +38,6 @@ pub(in crate::gateway::upstream) enum PrimaryFlowDecision {
 ///
 /// # 返回
 /// 返回函数执行结果
-fn resolve_chatgpt_primary_bearer(token: &Token) -> Option<String> {
-    let access = token.access_token.trim();
-    if access.is_empty() {
-        None
-    } else {
-        Some(access.to_string())
-    }
-}
-
 /// 函数 `run_primary_upstream_flow`
 ///
 /// 作者: gaohongshun
@@ -77,17 +74,27 @@ pub(in crate::gateway::upstream) fn run_primary_upstream_flow<F>(
 where
     F: FnMut(Option<&str>, u16, Option<&str>),
 {
-    let (auth_token, token_source) =
-        if let Some(access_token) = resolve_chatgpt_primary_bearer(token) {
-            (access_token, "access_token")
-        } else {
-            let err = "missing chatgpt access token";
-            log_gateway_result(Some(primary_url), 401, Some(err));
+    let (auth_token, token_source) = match crate::agent_identity::resolve_chatgpt_authorization(
+        storage,
+        &account.id,
+        token,
+    ) {
+        Ok(value) => {
+            let source = if value.starts_with("AgentAssertion ") {
+                "agent_identity"
+            } else {
+                "access_token"
+            };
+            (value, source)
+        }
+        Err(err) => {
+            log_gateway_result(Some(primary_url), 401, Some(err.as_str()));
             return PrimaryFlowDecision::Terminal {
                 status_code: 401,
-                message: err.to_string(),
+                message: err,
             };
-        };
+        }
+    };
     if debug {
         log::debug!(
             "event=gateway_upstream_token_source path={} account_id={} token_source={} upstream_base={}",

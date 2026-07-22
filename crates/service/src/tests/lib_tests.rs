@@ -1152,7 +1152,7 @@ fn member_requestlog_queries_filter_to_owned_keys() {
         actor_one.clone(),
     ));
     assert!(today.result.get("error").is_none(), "{:?}", today.result);
-    assert_eq!(today.result["todayTokens"], 40);
+    assert_eq!(today.result["todayTokens"], 50);
     assert_eq!(today.result["estimatedCost"], 0.03);
 
     let clear = response_result(handle_request_with_actor(

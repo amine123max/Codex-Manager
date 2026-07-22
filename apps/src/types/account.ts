@@ -25,6 +25,7 @@ export interface Account {
   status: string;
   statusReason: string;
   hasToken: boolean;
+  authMode: string | null;
   planType: string | null;
   planTypeRaw: string | null;
   hasSubscription: boolean | null;

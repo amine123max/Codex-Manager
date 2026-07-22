@@ -3,7 +3,11 @@ use super::{
     resolve_logical_account_id, ExistingAccountIndex, ImportTokenPayload,
 };
 use crate::account_identity::build_account_storage_id;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use codexmanager_core::storage::{now_ts, Account, Storage, Token};
+use ed25519_dalek::pkcs8::EncodePrivateKey;
+use ed25519_dalek::SigningKey;
 use serde_json::json;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -56,6 +60,203 @@ fn payload() -> ImportTokenPayload {
         chatgpt_account_id_hint: None,
         user_id_hint: None,
     }
+}
+
+fn test_agent_private_key() -> String {
+    let signing_key = SigningKey::from_bytes(&[9_u8; 32]);
+    let document = signing_key.to_pkcs8_der().expect("encode private key");
+    STANDARD.encode(document.as_bytes())
+}
+
+fn agent_identity_value(
+    runtime_id: &str,
+    account_id: &str,
+    user_id: &str,
+    task_id: Option<&str>,
+) -> serde_json::Value {
+    let mut identity = json!({
+        "agent_runtime_id": runtime_id,
+        "agent_private_key": test_agent_private_key(),
+        "account_id": account_id,
+        "chatgpt_user_id": user_id,
+        "email": "agent@example.com",
+        "plan_type": "k12",
+        "chatgpt_account_is_fedramp": false
+    });
+    if let Some(task_id) = task_id {
+        identity["task_id"] = json!(task_id);
+    }
+    json!({
+        "auth_mode": "agentIdentity",
+        "agent_identity": identity
+    })
+}
+
+#[test]
+fn import_agent_identity_without_oauth_token_persists_credentials_and_plan() {
+    let storage = Storage::open_in_memory().expect("open storage");
+    storage.init().expect("init storage");
+    let mut index = ExistingAccountIndex::build(&storage).expect("index");
+    let item = agent_identity_value("runtime-1", "team-1", "user-1", Some("task-1"));
+
+    assert!(import_single_item(&storage, &mut index, &item, 1).expect("import"));
+
+    let account = storage
+        .find_account_by_id("team-1")
+        .expect("find account")
+        .expect("account");
+    assert_eq!(account.label, "agent@example.com");
+    let token = storage
+        .find_token_by_account_id("team-1")
+        .expect("find token")
+        .expect("token");
+    assert!(token.access_token.is_empty());
+    assert!(token.refresh_token.is_empty());
+    let identity = storage
+        .find_account_agent_identity("team-1")
+        .expect("find identity")
+        .expect("identity");
+    assert_eq!(identity.agent_runtime_id, "runtime-1");
+    assert_eq!(identity.task_id.as_deref(), Some("task-1"));
+    let subscription = storage
+        .find_account_subscription("team-1")
+        .expect("find subscription")
+        .expect("subscription");
+    assert_eq!(subscription.plan_type.as_deref(), Some("k12"));
+}
+
+#[test]
+fn import_agent_identity_accepts_camel_case_and_updates_same_team() {
+    let storage = Storage::open_in_memory().expect("open storage");
+    storage.init().expect("init storage");
+    let mut index = ExistingAccountIndex::build(&storage).expect("index");
+    let first = agent_identity_value("runtime-1", "team-1", "user-1", Some("task-1"));
+    import_single_item(&storage, &mut index, &first, 1).expect("first import");
+    let second = json!({
+        "authMode": "agentIdentity",
+        "agentIdentity": {
+            "agentRuntimeId": "runtime-2",
+            "agentPrivateKey": test_agent_private_key(),
+            "taskId": "task-2",
+            "accountId": "team-1",
+            "chatgptUserId": "user-1",
+            "email": "agent@example.com",
+            "planType": "team"
+        }
+    });
+
+    assert!(!import_single_item(&storage, &mut index, &second, 2).expect("second import"));
+    assert_eq!(storage.list_accounts().expect("accounts").len(), 1);
+    let identity = storage
+        .find_account_agent_identity("team-1")
+        .expect("find identity")
+        .expect("identity");
+    assert_eq!(identity.agent_runtime_id, "runtime-2");
+    assert_eq!(identity.task_id.as_deref(), Some("task-2"));
+}
+
+#[test]
+fn import_agent_identity_reuses_existing_oauth_account_for_same_chatgpt_team() {
+    let storage = Storage::open_in_memory().expect("open storage");
+    storage.init().expect("init storage");
+    let now = now_ts();
+    storage
+        .insert_account(&Account {
+            id: "legacy-storage-id".to_string(),
+            label: "old@example.com".to_string(),
+            issuer: "https://auth.openai.com".to_string(),
+            chatgpt_account_id: Some("team-1".to_string()),
+            workspace_id: Some("legacy-workspace".to_string()),
+            group_name: None,
+            sort: 0,
+            status: "active".to_string(),
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("insert account");
+    storage
+        .insert_token(&Token {
+            account_id: "legacy-storage-id".to_string(),
+            id_token: String::new(),
+            access_token: "oauth-access".to_string(),
+            refresh_token: "oauth-refresh".to_string(),
+            api_key_access_token: None,
+            last_refresh: now,
+        })
+        .expect("insert token");
+    let mut index = ExistingAccountIndex::build(&storage).expect("index");
+    let item = agent_identity_value("runtime-1", "team-1", "user-1", Some("task-1"));
+
+    assert!(!import_single_item(&storage, &mut index, &item, 1).expect("import"));
+    assert_eq!(storage.list_accounts().expect("accounts").len(), 1);
+    assert!(storage
+        .find_account_agent_identity("legacy-storage-id")
+        .expect("identity")
+        .is_some());
+}
+
+#[test]
+fn import_agent_identity_keeps_different_teams_for_same_user_separate() {
+    let storage = Storage::open_in_memory().expect("open storage");
+    storage.init().expect("init storage");
+    let mut index = ExistingAccountIndex::build(&storage).expect("index");
+    let first = agent_identity_value("runtime-a", "team-a", "same-user", Some("task-a"));
+    let second = agent_identity_value("runtime-b", "team-b", "same-user", Some("task-b"));
+
+    import_single_item(&storage, &mut index, &first, 1).expect("first import");
+    import_single_item(&storage, &mut index, &second, 2).expect("second import");
+
+    assert_eq!(storage.list_accounts().expect("accounts").len(), 2);
+    assert!(storage
+        .find_account_agent_identity("team-a")
+        .expect("team a")
+        .is_some());
+    assert!(storage
+        .find_account_agent_identity("team-b")
+        .expect("team b")
+        .is_some());
+}
+
+#[test]
+fn import_agent_identity_rejects_invalid_private_key() {
+    let storage = Storage::open_in_memory().expect("open storage");
+    storage.init().expect("init storage");
+    let mut index = ExistingAccountIndex::build(&storage).expect("index");
+    let item = json!({
+        "auth_mode": "agentIdentity",
+        "agent_identity": {
+            "agent_runtime_id": "runtime-1",
+            "agent_private_key": "bm90LWEtcHJpdmF0ZS1rZXk=",
+            "account_id": "team-1",
+            "chatgpt_user_id": "user-1"
+        }
+    });
+
+    let err = import_single_item(&storage, &mut index, &item, 1).expect_err("invalid key");
+    assert!(err.contains("PKCS#8"));
+}
+
+#[test]
+fn imported_agent_identity_survives_database_reopen() {
+    let path = unique_temp_db_path();
+    {
+        let storage = Storage::open(&path).expect("open storage");
+        storage.init().expect("init storage");
+        let mut index = ExistingAccountIndex::build(&storage).expect("index");
+        let item = agent_identity_value("runtime-1", "team-1", "user-1", Some("task-1"));
+        import_single_item(&storage, &mut index, &item, 1).expect("import");
+    }
+
+    let reopened = Storage::open(&path).expect("reopen storage");
+    reopened.init().expect("reinit storage");
+    let identity = reopened
+        .find_account_agent_identity("team-1")
+        .expect("find identity")
+        .expect("identity");
+    assert_eq!(identity.agent_runtime_id, "runtime-1");
+    assert_eq!(identity.task_id.as_deref(), Some("task-1"));
+    drop(reopened);
+    let _ = std::fs::remove_file(path);
 }
 
 /// 函数 `resolve_logical_account_id_distinguishes_workspace_under_same_chatgpt`

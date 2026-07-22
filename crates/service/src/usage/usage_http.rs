@@ -1157,7 +1157,10 @@ async fn fetch_usage_snapshot_async(
         let client = usage_http_client();
         let mut req = client
             .get(&url)
-            .header("Authorization", format!("Bearer {bearer}"));
+            .header(
+                "Authorization",
+                crate::agent_identity::authorization_header_value(bearer),
+            );
         let request_headers = build_usage_request_headers(workspace_id);
         if !request_headers.is_empty() {
             req = req.headers(request_headers);
@@ -1219,7 +1222,10 @@ async fn consume_rate_limit_reset_credit_async(
         let client = usage_http_client();
         client
             .post(&url)
-            .header("Authorization", format!("Bearer {bearer}"))
+            .header(
+                "Authorization",
+                crate::agent_identity::authorization_header_value(bearer),
+            )
             .headers(build_rate_limit_reset_request_headers(workspace_id))
             .json(&body)
     };
@@ -1274,7 +1280,10 @@ async fn fetch_accounts_check_response_async(
         let client = subscription_http_client();
         client
             .get(&url)
-            .header("Authorization", format!("Bearer {bearer}"))
+            .header(
+                "Authorization",
+                crate::agent_identity::authorization_header_value(bearer),
+            )
             .header("Origin", "https://chatgpt.com")
             .header("Referer", "https://chatgpt.com/")
             .header("Accept", "application/json")

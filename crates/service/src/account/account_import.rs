@@ -2,7 +2,7 @@ use codexmanager_core::auth::{
     extract_chatgpt_account_id, extract_chatgpt_user_id, extract_workspace_id,
     parse_id_token_claims, IdTokenClaims, DEFAULT_ISSUER,
 };
-use codexmanager_core::storage::{now_ts, Account, Storage, Token};
+use codexmanager_core::storage::{now_ts, Account, AccountAgentIdentity, Storage, Token};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -45,6 +45,18 @@ struct ImportTokenPayload {
     account_id_hint: Option<String>,
     chatgpt_account_id_hint: Option<String>,
     user_id_hint: Option<String>,
+}
+
+#[derive(Debug)]
+struct ImportAgentIdentityPayload {
+    agent_runtime_id: String,
+    agent_private_key: String,
+    task_id: Option<String>,
+    account_id: String,
+    chatgpt_user_id: String,
+    email: Option<String>,
+    plan_type: Option<String>,
+    chatgpt_account_is_fedramp: bool,
 }
 
 #[derive(Debug)]
@@ -802,6 +814,9 @@ fn import_single_item_with_account_id(
     item: &Value,
     sequence: usize,
 ) -> Result<ImportedAccount, String> {
+    if let Some(payload) = extract_agent_identity_payload(item)? {
+        return import_agent_identity_item(storage, index, item, payload, sequence);
+    }
     let payload = extract_token_payload(&item)?;
     let meta = extract_account_meta(item);
     let claims = parse_id_token_claims(&payload.id_token).ok();
@@ -988,6 +1003,9 @@ fn import_single_item_with_account_id(
         last_refresh: now,
     };
     storage.insert_token(&token).map_err(|e| e.to_string())?;
+    storage
+        .delete_account_agent_identity(&account_id)
+        .map_err(|e| e.to_string())?;
     if let Some(plan_type) = plan_type.as_deref() {
         storage
             .upsert_account_subscription(
@@ -1002,6 +1020,166 @@ fn import_single_item_with_account_id(
     }
     index.upsert_index(&account);
     index.index_token_subject(&account, &token);
+    Ok(ImportedAccount {
+        account_id,
+        created,
+    })
+}
+
+fn import_agent_identity_item(
+    storage: &Storage,
+    index: &mut ExistingAccountIndex,
+    item: &Value,
+    payload: ImportAgentIdentityPayload,
+    sequence: usize,
+) -> Result<ImportedAccount, String> {
+    crate::agent_identity::validate_agent_identity_private_key(&payload.agent_private_key)?;
+    let meta = extract_account_meta(item);
+    let chatgpt_account_id = payload.account_id.trim().to_string();
+    let workspace_id = chatgpt_account_id.clone();
+    let existing_id = index.find_existing_account_id(
+        Some(&chatgpt_account_id),
+        None,
+        None,
+        Some(&chatgpt_account_id),
+    );
+    let mut account_id = existing_id
+        .clone()
+        .unwrap_or_else(|| chatgpt_account_id.clone());
+    if existing_id.is_none() {
+        if let Some(existing) = index.by_id.get(&account_id) {
+            if existing.chatgpt_account_id.as_deref().map(str::trim)
+                != Some(chatgpt_account_id.as_str())
+            {
+                account_id = account_key(&chatgpt_account_id, Some("agent_identity"));
+            }
+        }
+    }
+
+    let email = payload
+        .email
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| meta.email.clone());
+    let label = email
+        .clone()
+        .or_else(|| meta.label.clone())
+        .or_else(|| meta.display_name.clone())
+        .unwrap_or_else(|| format!("导入账号{:04}", sequence));
+    let default_issuer =
+        std::env::var("CODEXMANAGER_ISSUER").unwrap_or_else(|_| DEFAULT_ISSUER.to_string());
+    let issuer = meta
+        .issuer
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(default_issuer);
+    let group_name = meta
+        .group_name
+        .clone()
+        .filter(|value| !value.trim().is_empty());
+    let now = now_ts();
+    let (account, created) = if let Some(existing) = index.by_id.get(&account_id).cloned() {
+        (
+            Account {
+                id: existing.id.clone(),
+                label: merge_imported_label(&existing.label, label, email.as_deref()),
+                issuer: if existing.issuer.trim().is_empty() {
+                    issuer
+                } else {
+                    existing.issuer
+                },
+                chatgpt_account_id: Some(chatgpt_account_id.clone()),
+                workspace_id: Some(workspace_id),
+                group_name: existing
+                    .group_name
+                    .filter(|value| !value.trim().is_empty())
+                    .or(group_name)
+                    .or_else(|| Some("IMPORT".to_string())),
+                sort: existing.sort,
+                status: "active".to_string(),
+                created_at: existing.created_at,
+                updated_at: now,
+            },
+            false,
+        )
+    } else {
+        let sort = index.next_sort;
+        index.next_sort = index.next_sort.saturating_add(ACCOUNT_SORT_STEP);
+        (
+            Account {
+                id: account_id.clone(),
+                label,
+                issuer,
+                chatgpt_account_id: Some(chatgpt_account_id.clone()),
+                workspace_id: Some(workspace_id),
+                group_name: group_name.or_else(|| Some("IMPORT".to_string())),
+                sort,
+                status: "active".to_string(),
+                created_at: now,
+                updated_at: now,
+            },
+            true,
+        )
+    };
+
+    storage.insert_account(&account).map_err(|err| err.to_string())?;
+    let existing_metadata = storage
+        .find_account_metadata(&account_id)
+        .map_err(|err| err.to_string())?;
+    let note = meta.note.filter(|value| !value.trim().is_empty()).or_else(|| {
+        existing_metadata
+            .as_ref()
+            .and_then(|value| value.note.clone())
+    });
+    let tags = meta.tags.filter(|value| !value.trim().is_empty()).or_else(|| {
+        existing_metadata
+            .as_ref()
+            .and_then(|value| value.tags.clone())
+    });
+    storage
+        .upsert_account_metadata(&account_id, note.as_deref(), tags.as_deref())
+        .map_err(|err| err.to_string())?;
+
+    let token = Token {
+        account_id: account_id.clone(),
+        id_token: String::new(),
+        access_token: String::new(),
+        refresh_token: String::new(),
+        api_key_access_token: None,
+        last_refresh: now,
+    };
+    storage.insert_token(&token).map_err(|err| err.to_string())?;
+    storage
+        .upsert_account_agent_identity(&AccountAgentIdentity {
+            account_id: account_id.clone(),
+            agent_runtime_id: payload.agent_runtime_id,
+            agent_private_key: payload.agent_private_key,
+            task_id: payload.task_id,
+            chatgpt_user_id: payload.chatgpt_user_id,
+            chatgpt_account_is_fedramp: payload.chatgpt_account_is_fedramp,
+            created_at: now,
+            updated_at: now,
+        })
+        .map_err(|err| err.to_string())?;
+
+    let plan_type = payload
+        .plan_type
+        .or(meta.plan_type)
+        .filter(|value| !value.trim().is_empty())
+        .map(normalize_imported_plan_type);
+    if let Some(plan_type) = plan_type.as_deref() {
+        storage
+            .upsert_account_subscription(
+                &account_id,
+                !crate::account_plan::is_free_plan_type(Some(plan_type)),
+                Some(plan_type),
+                Some(plan_type),
+                None,
+                None,
+            )
+            .map_err(|err| err.to_string())?;
+    }
+    index.upsert_index(&account);
     Ok(ImportedAccount {
         account_id,
         created,
@@ -1190,6 +1368,58 @@ fn extract_token_payload(item: &Value) -> Result<ImportTokenPayload, String> {
         chatgpt_account_id_hint,
         user_id_hint,
     })
+}
+
+fn extract_agent_identity_payload(
+    item: &Value,
+) -> Result<Option<ImportAgentIdentityPayload>, String> {
+    let auth_mode = optional_string_paths(item, &[&["auth_mode"], &["authMode"]]);
+    let nested = value_at_path(item, &["agent_identity"])
+        .or_else(|| value_at_path(item, &["agentIdentity"]));
+    let is_agent_identity = nested.is_some()
+        || auth_mode
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("agentIdentity"));
+    if !is_agent_identity {
+        return Ok(None);
+    }
+    let source = nested.unwrap_or(item);
+    let required = |snake: &str, camel: &str, label: &str| {
+        required_string_paths(source, &[&[snake], &[camel]], label)
+    };
+    let agent_runtime_id = required(
+        "agent_runtime_id",
+        "agentRuntimeId",
+        "agent_runtime_id/agentRuntimeId",
+    )?;
+    let agent_private_key = required(
+        "agent_private_key",
+        "agentPrivateKey",
+        "agent_private_key/agentPrivateKey",
+    )?;
+    let account_id = required("account_id", "accountId", "account_id/accountId")?;
+    let chatgpt_user_id = required(
+        "chatgpt_user_id",
+        "chatgptUserId",
+        "chatgpt_user_id/chatgptUserId",
+    )?;
+    Ok(Some(ImportAgentIdentityPayload {
+        agent_runtime_id,
+        agent_private_key,
+        task_id: optional_string_paths(source, &[&["task_id"], &["taskId"]]),
+        account_id,
+        chatgpt_user_id,
+        email: optional_string_paths(source, &[&["email"]]),
+        plan_type: optional_string_paths(source, &[&["plan_type"], &["planType"]]),
+        chatgpt_account_is_fedramp: optional_bool_paths(
+            source,
+            &[
+                &["chatgpt_account_is_fedramp"],
+                &["chatgptAccountIsFedramp"],
+            ],
+        )
+        .unwrap_or(false),
+    }))
 }
 
 /// 函数 `resolve_logical_account_id`
@@ -1495,6 +1725,19 @@ fn value_to_string(value: &Value) -> Option<String> {
         _ => return None,
     };
     (!raw.is_empty()).then_some(raw)
+}
+
+fn optional_bool_paths(value: &Value, paths: &[&[&str]]) -> Option<bool> {
+    paths.iter().find_map(|path| {
+        let value = value_at_path(value, path)?;
+        value.as_bool().or_else(|| {
+            value.as_str().and_then(|raw| match raw.trim().to_ascii_lowercase().as_str() {
+                "true" | "1" => Some(true),
+                "false" | "0" => Some(false),
+                _ => None,
+            })
+        })
+    })
 }
 
 /// 函数 `optional_tags`

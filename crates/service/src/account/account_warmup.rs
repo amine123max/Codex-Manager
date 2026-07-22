@@ -153,8 +153,14 @@ fn warmup_single_account(
     let started_at = Instant::now();
     match load_account_token(storage, &account) {
         Ok(mut token) => {
-            let mut outcome =
-                send_warmup_request_with_fallback(client, &account, &token, model_slug, message);
+            let mut outcome = send_warmup_request_with_fallback(
+                storage,
+                client,
+                &account,
+                &token,
+                model_slug,
+                message,
+            );
 
             if let Err(err) = outcome.as_ref() {
                 if should_retry_warmup_with_refresh(&token, err) {
@@ -171,7 +177,12 @@ fn warmup_single_account(
                     )
                     .and_then(|_| {
                         send_warmup_request_with_fallback(
-                            client, &account, &token, model_slug, message,
+                            storage,
+                            client,
+                            &account,
+                            &token,
+                            model_slug,
+                            message,
                         )
                     });
                 }
@@ -319,17 +330,25 @@ fn resolve_warmup_model_slug(storage: &Storage) -> String {
 }
 
 fn send_warmup_request_with_fallback(
+    storage: &Storage,
     client: &Client,
     account: &Account,
     token: &Token,
     model_slug: &str,
     message: &str,
 ) -> Result<String, String> {
-    let primary = send_warmup_request(client, account, token, model_slug, message);
+    let primary = send_warmup_request(storage, client, account, token, model_slug, message);
     match primary {
         Ok(()) => Ok("已发送预热消息".to_string()),
         Err(primary_err) if message == DEFAULT_WARMUP_MESSAGE => {
-            send_warmup_request(client, account, token, model_slug, FALLBACK_WARMUP_MESSAGE)
+            send_warmup_request(
+                storage,
+                client,
+                account,
+                token,
+                model_slug,
+                FALLBACK_WARMUP_MESSAGE,
+            )
                 .map(|_| "已发送预热消息".to_string())
                 .map_err(|fallback_err| format!("{primary_err}; fallback={fallback_err}"))
         }
@@ -350,6 +369,7 @@ fn should_retry_warmup_with_refresh(token: &Token, err: &str) -> bool {
 }
 
 fn send_warmup_request(
+    storage: &Storage,
     client: &Client,
     account: &Account,
     token: &Token,
@@ -371,7 +391,12 @@ fn send_warmup_request(
         "store": false
     });
 
-    let headers = build_warmup_headers(account, token.access_token.as_str())?;
+    let authorization = crate::agent_identity::resolve_chatgpt_authorization(
+        storage,
+        &account.id,
+        token,
+    )?;
+    let headers = build_warmup_headers(account, authorization.as_str())?;
     let response = client
         .post(WARMUP_UPSTREAM_URL)
         .headers(headers)
@@ -710,7 +735,7 @@ fn build_warmup_headers(account: &Account, bearer: &str) -> Result<HeaderMap, St
     let mut headers = HeaderMap::new();
     headers.insert(
         reqwest::header::AUTHORIZATION,
-        header_value(&format!("Bearer {bearer}"))?,
+        header_value(&crate::agent_identity::authorization_header_value(bearer))?,
     );
     headers.insert(
         reqwest::header::ACCEPT,

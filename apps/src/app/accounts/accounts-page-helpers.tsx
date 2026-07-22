@@ -1,7 +1,7 @@
 "use client";
 
 import type { LucideIcon } from "lucide-react";
-import { Power, PowerOff, RefreshCw, Zap } from "lucide-react";
+import { BrainCircuit, KeyRound, Power, PowerOff, RefreshCw, Zap } from "lucide-react";
 import { useI18n } from "@/lib/i18n/provider";
 import { cn } from "@/lib/utils";
 import { resolveAccountPlanKey } from "@/lib/utils/account-plan";
@@ -633,10 +633,26 @@ export function AccountInfoCell({
     <Tooltip>
       <TooltipTrigger render={<div />} className="block cursor-help text-left">
         <div className="flex flex-col overflow-hidden">
-          <div className="flex items-center gap-2 overflow-hidden">
-            <span className="truncate text-sm font-semibold">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span className="min-w-0 truncate text-sm font-semibold">
               {account.name}
             </span>
+            <Badge
+              variant="secondary"
+              className="h-4 shrink-0 gap-0.5 bg-emerald-500/10 px-1.5 text-[9px] text-emerald-700 dark:text-emerald-300"
+            >
+              <BrainCircuit className="h-2.5 w-2.5" />
+              OpenAI
+            </Badge>
+            {String(account.authMode || "").toLowerCase() === "agentidentity" ? (
+              <Badge
+                variant="secondary"
+                className="h-4 shrink-0 gap-0.5 bg-teal-500/10 px-1.5 text-[9px] text-teal-700 dark:text-teal-300"
+              >
+                <KeyRound className="h-2.5 w-2.5" />
+                Agent Identity
+              </Badge>
+            ) : null}
             {accountPlanLabel ? (
               <Badge
                 variant="secondary"

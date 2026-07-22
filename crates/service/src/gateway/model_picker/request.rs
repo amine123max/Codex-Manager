@@ -66,7 +66,10 @@ fn build_models_request_headers(
             residency_requirement.to_string(),
         ));
     }
-    headers.push(("Authorization".to_string(), format!("Bearer {}", bearer)));
+    headers.push((
+        "Authorization".to_string(),
+        crate::agent_identity::authorization_header_value(bearer),
+    ));
     if include_account_header {
         if let Some(account_id) = account_header_value
             .map(str::trim)
@@ -345,7 +348,7 @@ async fn send_models_request_async(
     let bearer = if super::super::is_openai_api_base(upstream_base) {
         super::super::resolve_openai_bearer_token(storage, account, token)?
     } else {
-        token.access_token.clone()
+        crate::agent_identity::resolve_chatgpt_authorization(storage, &account.id, token)?
     };
     let account_header_value = account
         .chatgpt_account_id

@@ -6,7 +6,7 @@ use codexmanager_core::{
     },
 };
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::account_plan::resolve_effective_account_plan;
 use crate::storage_helpers::open_storage;
@@ -305,6 +305,7 @@ fn to_account_summary_with_reason(
     preferred: bool,
     status_reason: Option<String>,
     has_token: bool,
+    auth_mode: Option<String>,
     plan_type: Option<String>,
     plan_type_raw: Option<String>,
     has_subscription: Option<bool>,
@@ -340,6 +341,7 @@ fn to_account_summary_with_reason(
         status: acc.status,
         status_reason,
         has_token,
+        auth_mode,
         plan_type,
         plan_type_raw,
         has_subscription,
@@ -460,6 +462,12 @@ fn to_account_summaries(
         .into_iter()
         .map(|item| (item.account_id.clone(), item))
         .collect::<HashMap<String, AccountSubscription>>();
+    let agent_identity_account_ids = storage
+        .list_account_agent_identities()
+        .map_err(|err| format!("load account agent identities failed: {err}"))?
+        .into_iter()
+        .map(|identity| identity.account_id)
+        .collect::<HashSet<_>>();
     let source_assignments = storage
         .list_quota_source_model_assignments()
         .map_err(|err| format!("load quota source assignments failed: {err}"))?;
@@ -495,6 +503,7 @@ fn to_account_summaries(
                 &usages,
                 &metadata,
                 &subscriptions,
+                &agent_identity_account_ids,
                 &model_slugs_by_account,
                 &quota_overrides,
                 &billing_usage,
@@ -526,6 +535,7 @@ fn map_account_summary(
     usages: &HashMap<String, UsageSnapshotRecord>,
     metadata: &HashMap<String, AccountMetadata>,
     subscriptions: &HashMap<String, AccountSubscription>,
+    agent_identity_account_ids: &HashSet<String>,
     model_slugs_by_account: &HashMap<String, Vec<String>>,
     quota_overrides: &HashMap<String, AccountQuotaCapacityOverride>,
     billing_usage: &HashMap<String, AccountTokenUsageSummary>,
@@ -540,6 +550,9 @@ fn map_account_summary(
         subscription,
     );
     let has_token = tokens.contains_key(&account_id);
+    let auth_mode = agent_identity_account_ids
+        .contains(&account_id)
+        .then(|| "agentIdentity".to_string());
     let account_metadata = metadata.get(&account_id);
     let model_slugs = model_slugs_by_account
         .get(&account_id)
@@ -572,6 +585,7 @@ fn map_account_summary(
         preferred,
         status_reason,
         has_token,
+        auth_mode,
         plan_type,
         plan_type_raw,
         subscription.map(|value| value.has_subscription),

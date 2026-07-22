@@ -4,6 +4,7 @@ use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod account_manager;
+mod account_agent_identities;
 mod account_metadata;
 mod account_subscriptions;
 mod accounts;
@@ -306,6 +307,18 @@ pub struct TokenUsageRollup {
     pub request_count: i64,
     pub success_count: i64,
     pub error_count: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AccountAgentIdentity {
+    pub account_id: String,
+    pub agent_runtime_id: String,
+    pub agent_private_key: String,
+    pub task_id: Option<String>,
+    pub chatgpt_user_id: String,
+    pub chatgpt_account_is_fedramp: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1062,6 +1075,11 @@ impl Storage {
             "069_reprice_sub2api_openai_usage",
             include_str!("../../migrations/069_reprice_sub2api_openai_usage.sql"),
         )?;
+        self.apply_sql_or_compat_migration(
+            "070_account_agent_identities",
+            include_str!("../../migrations/070_account_agent_identities.sql"),
+            |s| s.ensure_account_agent_identities_table(),
+        )?;
         self.ensure_api_key_rotation_columns()?;
         self.ensure_aggregate_apis_table()?;
         self.ensure_aggregate_api_supplier_model_tables()?;
@@ -1079,6 +1097,7 @@ impl Storage {
         self.ensure_request_log_route_detail_columns()?;
         self.ensure_model_catalog_models_table()?;
         self.ensure_account_subscriptions_table()?;
+        self.ensure_account_agent_identities_table()?;
         self.ensure_quota_pool_tables()?;
         self.ensure_account_manager_tables()?;
         self.ensure_model_source_tables()?;

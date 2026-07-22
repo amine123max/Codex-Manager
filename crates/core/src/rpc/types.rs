@@ -184,6 +184,8 @@ pub struct AccountSummary {
     pub status_reason: Option<String>,
     #[serde(default)]
     pub has_token: bool,
+    #[serde(default)]
+    pub auth_mode: Option<String>,
     pub plan_type: Option<String>,
     pub plan_type_raw: Option<String>,
     pub has_subscription: Option<bool>,

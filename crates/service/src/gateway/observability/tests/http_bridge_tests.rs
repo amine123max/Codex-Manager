@@ -66,6 +66,22 @@ impl Drop for EnvGuard {
     }
 }
 
+struct UpstreamStreamTimeoutGuard(u64);
+
+impl UpstreamStreamTimeoutGuard {
+    fn set(timeout_ms: u64) -> Self {
+        let previous = crate::gateway::current_upstream_stream_timeout_ms();
+        crate::gateway::set_upstream_stream_timeout_ms(timeout_ms);
+        Self(previous)
+    }
+}
+
+impl Drop for UpstreamStreamTimeoutGuard {
+    fn drop(&mut self) {
+        crate::gateway::set_upstream_stream_timeout_ms(self.0);
+    }
+}
+
 /// 函数 `open_mock_http_response`
 ///
 /// 作者: gaohongshun
@@ -124,12 +140,14 @@ fn open_streaming_mock_http_response(
         .iter()
         .map(|(chunk, delay_ms)| ((*chunk).to_string(), *delay_ms))
         .collect::<Vec<_>>();
+    let content_length = chunks.iter().map(|(chunk, _)| chunk.len()).sum::<usize>();
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("accept mock client");
         let mut request_buf = [0_u8; 2048];
         let _ = stream.read(&mut request_buf);
-        let response_header =
-            format!("HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nConnection: close\r\n\r\n");
+        let response_header = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {content_length}\r\nConnection: close\r\n\r\n"
+        );
         stream
             .write_all(response_header.as_bytes())
             .expect("write streaming response headers");
@@ -2530,6 +2548,8 @@ fn openai_responses_passthrough_reader_maps_bare_incomplete_to_disconnect_messag
 /// 无
 #[test]
 fn passthrough_sse_reader_captures_raw_html_error_body() {
+    let _env_guard = crate::test_env_guard();
+    let _timeout_guard = UpstreamStreamTimeoutGuard::set(30_000);
     let (upstream, server) = open_streaming_mock_http_response(
         "text/html",
         &[(
@@ -2555,7 +2575,10 @@ fn passthrough_sse_reader_captures_raw_html_error_body() {
         .lock()
         .expect("lock usage collector")
         .clone();
-    assert!(mapped.contains("Just a moment"));
+    assert!(
+        mapped.contains("Just a moment"),
+        "mapped={mapped:?} collector={collector:?}"
+    );
     assert_eq!(
         collector.upstream_error_hint.as_deref(),
         Some("Cloudflare 安全验证页（title=Just a moment...）")

@@ -545,7 +545,11 @@ fn consume_rate_limit_reset_for_token(
     let mut active_workspace_id = clean_header_value(resolved_workspace_id);
     let mut active_subscription_account_id =
         clean_header_value(derived_chatgpt_id.or_else(|| active_workspace_id.clone()));
-    let mut bearer = current.access_token.clone();
+    let mut bearer = crate::agent_identity::resolve_chatgpt_authorization(
+        storage,
+        &current.account_id,
+        &current,
+    )?;
 
     if let Err(err) =
         consume_rate_limit_reset_credit(&base_url, &bearer, active_workspace_id.as_deref())
@@ -572,7 +576,11 @@ fn consume_rate_limit_reset_for_token(
                 clean_header_value(refreshed_workspace_id.or_else(|| refreshed_chatgpt_id.clone()));
             active_subscription_account_id =
                 clean_header_value(refreshed_chatgpt_id.or_else(|| active_workspace_id.clone()));
-            bearer = current.access_token.clone();
+            bearer = crate::agent_identity::resolve_chatgpt_authorization(
+                storage,
+                &current.account_id,
+                &current,
+            )?;
             if let Err(reset_err) =
                 consume_rate_limit_reset_credit(&base_url, &bearer, active_workspace_id.as_deref())
             {
@@ -677,7 +685,11 @@ fn refresh_usage_for_token(
     let resolved_workspace_id = clean_header_value(resolved_workspace_id);
     let resolved_subscription_account_id =
         clean_header_value(derived_chatgpt_id.or_else(|| resolved_workspace_id.clone()));
-    let bearer = current.access_token.clone();
+    let bearer = crate::agent_identity::resolve_chatgpt_authorization(
+        storage,
+        &current.account_id,
+        &current,
+    )?;
 
     match refresh_account_snapshot(
         storage,
@@ -720,7 +732,11 @@ fn refresh_usage_for_token(
                 clean_header_value(refreshed_workspace_id.or_else(|| refreshed_chatgpt_id.clone()));
             let refreshed_subscription_account_id =
                 clean_header_value(refreshed_chatgpt_id.or_else(|| refreshed_workspace_id.clone()));
-            let bearer = current.access_token.clone();
+            let bearer = crate::agent_identity::resolve_chatgpt_authorization(
+                storage,
+                &current.account_id,
+                &current,
+            )?;
             match refresh_account_snapshot(
                 storage,
                 &current.account_id,

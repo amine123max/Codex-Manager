@@ -45,7 +45,7 @@ fn serialize_models_response_outputs_codex_and_api_shapes() {
         .get("data")
         .and_then(Value::as_array)
         .expect("OpenAI-compatible data array");
-    assert_eq!(data.len(), 3);
+    assert_eq!(data.len(), 5);
     assert_eq!(
         data[0].get("id").and_then(Value::as_str),
         Some("gpt-5.3-codex")
@@ -60,11 +60,19 @@ fn serialize_models_response_outputs_codex_and_api_shapes() {
         data[2].get("id").and_then(Value::as_str),
         Some("gpt-image-2")
     );
+    assert_eq!(
+        data[3].get("id").and_then(Value::as_str),
+        Some("deepseek-v4-pro")
+    );
+    assert_eq!(
+        data[4].get("id").and_then(Value::as_str),
+        Some("deepseek-v4-flash")
+    );
     let models = value
         .get("models")
         .and_then(Value::as_array)
         .expect("models array");
-    assert_eq!(models.len(), 3);
+    assert_eq!(models.len(), 5);
     assert_eq!(
         models[0].get("slug").and_then(Value::as_str),
         Some("gpt-5.3-codex")
@@ -84,6 +92,14 @@ fn serialize_models_response_outputs_codex_and_api_shapes() {
     assert_eq!(
         models[2].get("slug").and_then(Value::as_str),
         Some("gpt-image-2")
+    );
+    assert_eq!(
+        models[3].get("slug").and_then(Value::as_str),
+        Some("deepseek-v4-pro")
+    );
+    assert_eq!(
+        models[4].get("slug").and_then(Value::as_str),
+        Some("deepseek-v4-flash")
     );
     assert_eq!(value.as_object().map(|object| object.len()), Some(3));
     assert!(value.get("etag").is_none());
@@ -113,7 +129,7 @@ fn serialize_models_response_preserves_description_for_codex_clients() {
         .get("data")
         .and_then(Value::as_array)
         .expect("OpenAI-compatible data array");
-    assert_eq!(models.len(), 2);
+    assert_eq!(models.len(), 4);
     assert_eq!(
         models[0].get("description").and_then(Value::as_str),
         Some("Latest frontier agentic coding model.")
@@ -144,11 +160,17 @@ fn serialize_models_response_appends_codex_image_tool_model_once() {
         .and_then(Value::as_array)
         .expect("models array");
 
-    assert_eq!(models.len(), 1);
+    assert_eq!(models.len(), 3);
+    let slugs = models
+        .iter()
+        .filter_map(|model| model.get("slug").and_then(Value::as_str))
+        .collect::<Vec<_>>();
     assert_eq!(
-        models[0].get("slug").and_then(Value::as_str),
-        Some("gpt-image-2")
+        slugs.iter().filter(|slug| **slug == "gpt-image-2").count(),
+        1
     );
+    assert!(slugs.contains(&"deepseek-v4-pro"));
+    assert!(slugs.contains(&"deepseek-v4-flash"));
 }
 
 #[test]
