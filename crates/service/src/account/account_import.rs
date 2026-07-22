@@ -1373,17 +1373,48 @@ fn extract_token_payload(item: &Value) -> Result<ImportTokenPayload, String> {
 fn extract_agent_identity_payload(
     item: &Value,
 ) -> Result<Option<ImportAgentIdentityPayload>, String> {
-    let auth_mode = optional_string_paths(item, &[&["auth_mode"], &["authMode"]]);
+    let auth_mode = optional_string_paths(
+        item,
+        &[
+            &["auth_mode"],
+            &["authMode"],
+            &["credentials", "auth_mode"],
+            &["credentials", "authMode"],
+        ],
+    );
     let nested = value_at_path(item, &["agent_identity"])
-        .or_else(|| value_at_path(item, &["agentIdentity"]));
+        .or_else(|| value_at_path(item, &["agentIdentity"]))
+        .or_else(|| value_at_path(item, &["credentials", "agent_identity"]))
+        .or_else(|| value_at_path(item, &["credentials", "agentIdentity"]));
+    let credentials = value_at_path(item, &["credentials"])
+        .filter(|value| value.is_object());
+    let credential_fields_look_like_agent_identity = credentials.is_some_and(|value| {
+        optional_string_paths(
+            value,
+            &[
+                &["agent_runtime_id"],
+                &["agentRuntimeId"],
+            ],
+        )
+        .is_some()
+            && optional_string_paths(
+                value,
+                &[
+                    &["agent_private_key"],
+                    &["agentPrivateKey"],
+                ],
+            )
+            .is_some()
+    });
     let is_agent_identity = nested.is_some()
         || auth_mode
             .as_deref()
-            .is_some_and(|value| value.eq_ignore_ascii_case("agentIdentity"));
+            .is_some_and(|value| value.eq_ignore_ascii_case("agentIdentity"))
+        || credential_fields_look_like_agent_identity;
     if !is_agent_identity {
         return Ok(None);
     }
-    let source = nested.unwrap_or(item);
+    let source = nested.or(credentials).unwrap_or(item);
     let required = |snake: &str, camel: &str, label: &str| {
         required_string_paths(source, &[&[snake], &[camel]], label)
     };
@@ -1397,7 +1428,16 @@ fn extract_agent_identity_payload(
         "agentPrivateKey",
         "agent_private_key/agentPrivateKey",
     )?;
-    let account_id = required("account_id", "accountId", "account_id/accountId")?;
+    let account_id = optional_string_paths(
+        source,
+        &[
+            &["account_id"],
+            &["accountId"],
+            &["chatgpt_account_id"],
+            &["chatgptAccountId"],
+        ],
+    )
+    .ok_or_else(|| "empty field: account_id/accountId/chatgpt_account_id".to_string())?;
     let chatgpt_user_id = required(
         "chatgpt_user_id",
         "chatgptUserId",

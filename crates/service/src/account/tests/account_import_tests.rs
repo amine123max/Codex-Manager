@@ -156,6 +156,49 @@ fn import_agent_identity_accepts_camel_case_and_updates_same_team() {
 }
 
 #[test]
+fn import_agent_identity_accepts_sub2api_selected_accounts_export_shape() {
+    let storage = Storage::open_in_memory().expect("open storage");
+    storage.init().expect("init storage");
+    let bundle = json!({
+        "type": "sub2api-data",
+        "version": 1,
+        "accounts": [{
+            "name": "agent@example.com",
+            "type": "oauth",
+            "platform": "openai",
+            "credentials": {
+                "auth_mode": "agentIdentity",
+                "agent_runtime_id": "runtime-export",
+                "agent_private_key": test_agent_private_key(),
+                "task_id": "task-export",
+                "account_id": "team-export",
+                "chatgpt_account_id": "team-export",
+                "chatgpt_user_id": "user-export",
+                "email": "agent@example.com",
+                "plan_type": "k12",
+                "chatgpt_account_is_fedramp": false
+            }
+        }]
+    });
+    let items = parse_items_from_content(&bundle.to_string()).expect("parse bundle");
+    assert_eq!(items.len(), 1);
+    let mut index = ExistingAccountIndex::build(&storage).expect("index");
+
+    assert!(import_single_item(&storage, &mut index, &items[0], 1).expect("import"));
+    let identity = storage
+        .find_account_agent_identity("team-export")
+        .expect("find identity")
+        .expect("identity");
+    assert_eq!(identity.agent_runtime_id, "runtime-export");
+    assert_eq!(identity.task_id.as_deref(), Some("task-export"));
+    let account = storage
+        .find_account_by_id("team-export")
+        .expect("find account")
+        .expect("account");
+    assert_eq!(account.label, "agent@example.com");
+}
+
+#[test]
 fn import_agent_identity_reuses_existing_oauth_account_for_same_chatgpt_team() {
     let storage = Storage::open_in_memory().expect("open storage");
     storage.init().expect("init storage");
