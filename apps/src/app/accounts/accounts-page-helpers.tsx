@@ -648,10 +648,10 @@ export function AccountInfoCell({
     <Tooltip>
       <TooltipTrigger render={<div />} className="block cursor-help text-left">
         <div className="flex flex-col overflow-hidden">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <span className="min-w-0 truncate text-sm font-semibold">
-              {account.name}
-            </span>
+          <span className="min-w-0 truncate text-sm font-semibold">
+            {account.name}
+          </span>
+          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
             <Badge
               variant="secondary"
               className="h-4 shrink-0 gap-0.5 bg-emerald-500/10 px-1.5 text-[9px] text-emerald-700 dark:text-emerald-300"
