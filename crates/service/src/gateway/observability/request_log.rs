@@ -465,8 +465,8 @@ pub(crate) fn write_request_log_with_attempts(
         cached_input_tokens,
         output_tokens,
         reasoning_output_tokens,
-    );
         effective_service_tier.or(service_tier),
+    );
     super::trace_log::log_failed_request(super::trace_log::FailedRequestLog {
         ts: created_at,
         trace_id: trace_context.trace_id,
