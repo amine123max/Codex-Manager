@@ -271,6 +271,79 @@ fn sub2api_repricing_migration_is_idempotent_and_updates_windows() {
 }
 
 #[test]
+fn gpt6_astra_repricing_migration_updates_aliases_tiers_and_windows() {
+    let storage = Storage::open_in_memory().expect("open");
+    storage.init().expect("init");
+    let created_at = now_ts();
+    let cases = [
+        ("gpt-6", None, 0.0132_f64),
+        (
+            "openai/gpt-6-astra-2026-09-01",
+            Some("priority"),
+            0.0264_f64,
+        ),
+    ];
+    for (index, (model, effective_service_tier, _)) in cases.iter().enumerate() {
+        let log = RequestLog {
+            account_id: Some("acc-gpt6-reprice".to_string()),
+            request_path: "/v1/responses".to_string(),
+            method: "POST".to_string(),
+            model: Some((*model).to_string()),
+            effective_service_tier: effective_service_tier.map(|value| value.to_string()),
+            status_code: Some(200),
+            created_at: created_at + index as i64,
+            ..Default::default()
+        };
+        let stat = RequestTokenStat {
+            account_id: log.account_id.clone(),
+            model: log.model.clone(),
+            input_tokens: Some(1_000),
+            cached_input_tokens: Some(200),
+            output_tokens: Some(100),
+            total_tokens: Some(1_100),
+            estimated_cost_usd: Some(0.0),
+            created_at: log.created_at,
+            ..Default::default()
+        };
+        storage
+            .insert_request_log_with_token_stat(&log, &stat)
+            .expect("insert old GPT-6 usage");
+    }
+
+    let migration = include_str!("../../../migrations/072_reprice_gpt6_astra_usage.sql");
+    for _ in 0..2 {
+        storage
+            .conn
+            .execute_batch(migration)
+            .expect("apply GPT-6 repricing migration");
+        let costs = storage
+            .conn
+            .prepare(
+                "SELECT estimated_cost_usd FROM request_token_stats ORDER BY request_log_id ASC",
+            )
+            .expect("prepare GPT-6 costs")
+            .query_map([], |row| row.get::<_, f64>(0))
+            .expect("query GPT-6 costs")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect GPT-6 costs");
+        assert_eq!(costs.len(), cases.len());
+        for (actual, (_, _, expected)) in costs.iter().zip(cases.iter()) {
+            assert!((actual - expected).abs() < 1e-12);
+        }
+
+        let usage = storage
+            .summarize_request_token_stats_by_account()
+            .expect("read repriced GPT-6 account usage")
+            .into_iter()
+            .find(|item| item.account_id == "acc-gpt6-reprice")
+            .expect("repriced GPT-6 account usage");
+        assert!((usage.usage.estimated_cost_usd - 0.0396).abs() < 1e-12);
+        assert!((usage.primary_window.estimated_cost_usd - 0.0396).abs() < 1e-12);
+        assert!((usage.secondary_window.estimated_cost_usd - 0.0396).abs() < 1e-12);
+    }
+}
+
+#[test]
 fn account_billing_window_backfill_restores_recent_persisted_stats() {
     let storage = Storage::open_in_memory().expect("open");
     storage.init().expect("init");

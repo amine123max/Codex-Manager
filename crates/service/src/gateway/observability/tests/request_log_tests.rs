@@ -103,6 +103,20 @@ fn estimate_cost_matches_openai_gpt56_prices() {
     assert_close(luna, 0.00382);
 }
 
+#[test]
+fn estimate_cost_matches_openai_gpt6_astra_standard_price() {
+    let actual = estimate_cost_usd(Some("gpt-6"), Some(1_000), Some(200), Some(500));
+    assert_close(actual, 0.0332);
+
+    let dated = estimate_cost_usd(
+        Some("gpt-6-astra-2026-09-01"),
+        Some(1_000),
+        Some(200),
+        Some(500),
+    );
+    assert_close(dated, 0.0332);
+}
+
 /// 函数 `estimate_cost_matches_openai_gpt54_large_context_prices`
 ///
 /// 作者: gaohongshun

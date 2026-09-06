@@ -1080,6 +1080,10 @@ impl Storage {
             include_str!("../../migrations/070_account_agent_identities.sql"),
             |s| s.ensure_account_agent_identities_table(),
         )?;
+        self.apply_sql_migration(
+            "072_reprice_gpt6_astra_usage",
+            include_str!("../../migrations/072_reprice_gpt6_astra_usage.sql"),
+        )?;
         self.ensure_api_key_rotation_columns()?;
         self.ensure_aggregate_apis_table()?;
         self.ensure_aggregate_api_supplier_model_tables()?;

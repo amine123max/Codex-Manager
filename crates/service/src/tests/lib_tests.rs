@@ -432,6 +432,71 @@ fn wallet_charge_uses_model_group_billing_model_override() {
 }
 
 #[test]
+fn wallet_charge_preserves_gpt6_priority_tier_for_billing_model_override() {
+    let _guard = test_env_guard();
+    let db_path = setup_dashboard_test_db("codexmanager-gpt6-priority-billing-override");
+    set_web_auth_mode("accounts").expect("enable accounts mode");
+    set_distribution_enabled(true).expect("enable distribution");
+    let user = create_test_member("member-gpt6-priority-billing", Some(1_000_000));
+    let key_id = create_owned_test_api_key(&user.id, "member GPT-6 key", "gpt-5-mini");
+    let storage = storage_helpers::open_storage().expect("open storage");
+    let group_id = storage
+        .default_model_group_id()
+        .expect("read default model group")
+        .expect("default model group");
+    let now = codexmanager_core::storage::now_ts();
+    storage
+        .replace_model_group_models(
+            &group_id,
+            &[ModelGroupModel {
+                group_id: group_id.clone(),
+                platform_model_slug: "gpt-5-mini".to_string(),
+                enabled: true,
+                rate_multiplier_millis: Some(1000),
+                billing_model_slug: Some("gpt-6".to_string()),
+                note: None,
+                created_at: now,
+                updated_at: now,
+            }],
+        )
+        .expect("save model group models");
+
+    let ledger = wallet_charge_for_request(
+        &storage,
+        Some(&key_id),
+        43,
+        0.00225,
+        Some("gpt-5-mini"),
+        Some("priority"),
+        Some(
+            serde_json::json!({
+                "inputTokens": 1000,
+                "cachedInputTokens": 0,
+                "outputTokens": 1000
+            })
+            .to_string(),
+        ),
+    )
+    .expect("charge wallet")
+    .expect("ledger entry");
+
+    assert_eq!(ledger.amount_credit_micros, -120_000);
+    let usage: serde_json::Value =
+        serde_json::from_str(ledger.raw_usage_json.as_deref().unwrap()).expect("usage json");
+    assert_eq!(usage["billingModelSlug"], "gpt-6");
+    assert!((usage["baseEstimatedCostUsd"].as_f64().unwrap() - 0.12).abs() < 0.000_001);
+    assert!((usage["chargedCostUsd"].as_f64().unwrap() - 0.12).abs() < 0.000_001);
+
+    let wallet = storage
+        .find_wallet_by_owner("user", &user.id)
+        .expect("read wallet")
+        .expect("wallet");
+    assert_eq!(wallet.balance_credit_micros, 880_000);
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
 fn member_dashboard_filters_to_current_user_keys() {
     let _guard = test_env_guard();
     let db_path = setup_dashboard_test_db("codexmanager-member-dashboard-filter");

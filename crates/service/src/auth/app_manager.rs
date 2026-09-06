@@ -877,6 +877,7 @@ pub fn wallet_charge_for_request(
         storage,
         model_group_access.as_ref(),
         estimated_cost_usd,
+        service_tier,
         raw_usage_json.as_deref(),
     );
     if base_cost_usd <= 0.0 {
@@ -921,12 +922,13 @@ fn model_group_base_cost_usd(
     storage: &Storage,
     model_group_access: Option<&codexmanager_core::storage::ModelGroupAccess>,
     estimated_cost_usd: f64,
+    service_tier: Option<&str>,
     raw_usage_json: Option<&str>,
 ) -> f64 {
     model_group_access
         .and_then(|access| access.billing_model_slug.as_deref())
         .and_then(|billing_model| {
-            estimate_billing_model_cost_usd(storage, billing_model, raw_usage_json)
+            estimate_billing_model_cost_usd(storage, billing_model, service_tier, raw_usage_json)
         })
         .unwrap_or(estimated_cost_usd)
         .max(0.0)
@@ -935,6 +937,7 @@ fn model_group_base_cost_usd(
 fn estimate_billing_model_cost_usd(
     storage: &Storage,
     billing_model: &str,
+    service_tier: Option<&str>,
     raw_usage_json: Option<&str>,
 ) -> Option<f64> {
     let usage = raw_usage_json.and_then(|raw| serde_json::from_str::<Value>(raw).ok())?;
@@ -973,6 +976,7 @@ fn estimate_billing_model_cost_usd(
         cached_input_tokens,
         output_tokens,
         None,
+        service_tier,
     );
     if cost > 0.0 {
         Some(cost)

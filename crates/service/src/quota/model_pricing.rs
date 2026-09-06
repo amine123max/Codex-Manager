@@ -1,6 +1,6 @@
 use codexmanager_core::storage::{now_ts, ModelPriceRule, Storage};
 
-pub(crate) const PRICE_SEED_VERSION: &str = "2026-07-16-sub2api";
+pub(crate) const PRICE_SEED_VERSION: &str = "2026-09-05-sub2api-gpt6";
 
 #[derive(Debug, Clone, Copy)]
 struct PriceSeed {
@@ -37,6 +37,18 @@ const ANTHROPIC_PRICE_SOURCE: &str = "https://docs.claude.com/en/docs/about-clau
 const GEMINI_PRICE_SOURCE: &str = "https://ai.google.dev/gemini-api/docs/pricing";
 
 const PRICE_SEEDS: &[PriceSeed] = &[
+    PriceSeed {
+        provider: "openai",
+        model_pattern: "gpt-6-astra",
+        input_price_per_1m: 10.0,
+        cached_input_price_per_1m: Some(1.0),
+        output_price_per_1m: 50.0,
+        long_context_threshold_tokens: Some(272_000),
+        long_context_input_price_per_1m: Some(20.0),
+        long_context_cached_input_price_per_1m: Some(2.0),
+        long_context_output_price_per_1m: Some(75.0),
+        source_url: OPENAI_PRICE_SOURCE,
+    },
     PriceSeed {
         provider: "openai",
         model_pattern: "gpt-5.6-sol",
@@ -506,6 +518,64 @@ fn rule_matches(rule: &ModelPriceRule, normalized_model: &str) -> bool {
     }
 }
 
+fn normalize_model_spelling(model: &str) -> String {
+    let segment = model.trim().rsplit('/').next().unwrap_or_default();
+    let mut normalized = segment
+        .to_ascii_lowercase()
+        .replace('_', "-")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("-");
+    while normalized.contains("--") {
+        normalized = normalized.replace("--", "-");
+    }
+    normalized
+}
+
+fn normalize_model_rule_candidate(model: &str) -> String {
+    let mut normalized = model
+        .trim()
+        .to_ascii_lowercase()
+        .replace('_', "-")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("-");
+    while normalized.contains("--") {
+        normalized = normalized.replace("--", "-");
+    }
+    normalized
+}
+
+fn canonical_model_for_pricing(model: &str) -> String {
+    let normalized = normalize_model_spelling(model);
+    if normalized == "gpt-6" {
+        "gpt-6-astra".to_string()
+    } else {
+        normalized
+    }
+}
+
+fn is_gpt6_astra_model(model: &str) -> bool {
+    let normalized = canonical_model_for_pricing(model);
+    normalized == "gpt-6-astra" || normalized.starts_with("gpt-6-astra-")
+}
+
+fn gpt6_service_tier_multiplier(model: &str, service_tier: Option<&str>) -> f64 {
+    if !is_gpt6_astra_model(model) {
+        return 1.0;
+    }
+    match service_tier
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "priority" | "fast" | "ultrafast" => 2.0,
+        "flex" => 0.5,
+        _ => 1.0,
+    }
+}
+
 fn price_from_rule(rule: &ModelPriceRule, input_tokens: i64) -> Option<ModelPriceMatch> {
     if !rule.enabled
         || !rule.currency.eq_ignore_ascii_case("USD")
@@ -544,21 +614,28 @@ pub(crate) fn resolve_model_price_from_rules(
     model: &str,
     input_tokens: i64,
 ) -> Option<ModelPriceMatch> {
-    let normalized = model.trim().to_ascii_lowercase();
-    if normalized.is_empty() || normalized == "unknown" {
+    let raw = normalize_model_rule_candidate(model);
+    if raw.is_empty() || raw == "unknown" {
         return None;
     }
 
+    let normalized = normalize_model_spelling(model);
+    let canonical = canonical_model_for_pricing(model);
+    let candidates = [raw.as_str(), normalized.as_str(), canonical.as_str()];
     let matched = rules
         .iter()
-        .filter(|rule| rule_matches(rule, &normalized))
+        .filter(|rule| {
+            candidates
+                .iter()
+                .any(|candidate| rule_matches(rule, candidate))
+        })
         .max_by_key(|rule| (rule.priority, rule.model_pattern.len() as i64))?;
 
     price_from_rule(matched, input_tokens)
 }
 
 pub(crate) fn resolve_model_price(model: &str, input_tokens: i64) -> Option<ModelPriceMatch> {
-    let normalized = model.trim().to_ascii_lowercase();
+    let normalized = canonical_model_for_pricing(model);
     if normalized.is_empty() || normalized == "unknown" {
         return None;
     }
@@ -672,6 +749,26 @@ pub(crate) fn estimate_cost_with_rules_and_reasoning(
     output_tokens: i64,
     reasoning_output_tokens: i64,
 ) -> CostEstimate {
+    estimate_cost_with_rules_and_reasoning_for_service_tier(
+        rules,
+        model,
+        input_tokens,
+        cached_input_tokens,
+        output_tokens,
+        reasoning_output_tokens,
+        None,
+    )
+}
+
+pub(crate) fn estimate_cost_with_rules_and_reasoning_for_service_tier(
+    rules: &[ModelPriceRule],
+    model: Option<&str>,
+    input_tokens: i64,
+    cached_input_tokens: i64,
+    output_tokens: i64,
+    reasoning_output_tokens: i64,
+    service_tier: Option<&str>,
+) -> CostEstimate {
     let Some(model) = model.map(str::trim).filter(|value| !value.is_empty()) else {
         return CostEstimate {
             provider: None,
@@ -690,13 +787,18 @@ pub(crate) fn estimate_cost_with_rules_and_reasoning(
         };
     };
 
-    estimate_cost_from_price(
+    let mut estimate = estimate_cost_from_price(
         price,
         input_tokens,
         cached_input_tokens,
         output_tokens,
         reasoning_output_tokens,
-    )
+    );
+    let multiplier = gpt6_service_tier_multiplier(model, service_tier);
+    if multiplier != 1.0 {
+        estimate.cost_usd = estimate.cost_usd.map(|cost| (cost * multiplier).max(0.0));
+    }
+    estimate
 }
 
 pub(crate) fn estimate_remaining_tokens_from_usd_with_rules(
@@ -726,6 +828,7 @@ pub(crate) fn estimate_cost_usd_for_log(
     cached_input_tokens: Option<i64>,
     output_tokens: Option<i64>,
     reasoning_output_tokens: Option<i64>,
+    service_tier: Option<&str>,
 ) -> f64 {
     let input = input_tokens.unwrap_or(0);
     let cached = cached_input_tokens.unwrap_or(0);
@@ -737,9 +840,35 @@ pub(crate) fn estimate_cost_usd_for_log(
         .ok()
         .filter(|rules| !rules.is_empty())
         .map(|rules| {
-            estimate_cost_with_rules_and_reasoning(&rules, model, input, cached, output, reasoning)
+            estimate_cost_with_rules_and_reasoning_for_service_tier(
+                &rules,
+                model,
+                input,
+                cached,
+                output,
+                reasoning,
+                service_tier,
+            )
         })
-        .unwrap_or_else(|| estimate_cost(model, input, cached, output));
+        .unwrap_or_else(|| {
+            if service_tier
+                .map(str::trim)
+                .map_or(true, |tier| tier.is_empty())
+                && reasoning == 0
+            {
+                estimate_cost(model, input, cached, output)
+            } else {
+                estimate_cost_with_rules_and_reasoning_for_service_tier(
+                    &[],
+                    model,
+                    input,
+                    cached,
+                    output,
+                    reasoning,
+                    service_tier,
+                )
+            }
+        });
 
     cost.cost_usd.unwrap_or(0.0)
 }
@@ -818,6 +947,24 @@ mod tests {
             resolve_model_price_from_rules(&rules, "vendor-other-mini", 0).expect("wildcard rule");
         assert_close(wildcard.input_price_per_1m, 1.0);
         assert_close(wildcard.output_price_per_1m, 2.0);
+    }
+
+    #[test]
+    fn database_rules_keep_provider_prefixed_model_matching() {
+        let rules = vec![test_rule(
+            "provider-exact",
+            "openai/gpt-6",
+            "exact",
+            100,
+            3.0,
+            Some(0.3),
+            4.0,
+        )];
+        let price = resolve_model_price_from_rules(&rules, "openai/gpt-6", 0)
+            .expect("provider-prefixed exact rule");
+        assert_close(price.input_price_per_1m, 3.0);
+        assert_close(price.cached_input_price_per_1m, 0.3);
+        assert_close(price.output_price_per_1m, 4.0);
     }
 
     #[test]
@@ -907,6 +1054,51 @@ mod tests {
         assert_close(long.input_price_per_1m, 10.0);
         assert_close(long.cached_input_price_per_1m, 1.0);
         assert_close(long.output_price_per_1m, 45.0);
+    }
+
+    #[test]
+    fn matches_sub2api_gpt_6_astra_aliases_and_long_context_prices() {
+        for model in [
+            "gpt-6",
+            "gpt-6-astra",
+            "openai/gpt-6",
+            "provider/gpt-6_astra",
+            "gpt-6-astra-2026-09-01",
+        ] {
+            let price = resolve_model_price(model, 272_000).expect("gpt-6 Astra price");
+            assert_close(price.input_price_per_1m, 10.0);
+            assert_close(price.cached_input_price_per_1m, 1.0);
+            assert_close(price.output_price_per_1m, 50.0);
+        }
+
+        let long = resolve_model_price("openai/gpt-6", 272_001).expect("long price");
+        assert_close(long.input_price_per_1m, 20.0);
+        assert_close(long.cached_input_price_per_1m, 2.0);
+        assert_close(long.output_price_per_1m, 75.0);
+        assert!(resolve_model_price("gpt-6-terra", 0).is_none());
+    }
+
+    #[test]
+    fn applies_sub2api_gpt_6_astra_service_tier_prices() {
+        let cases = [
+            (None, 2.34675_f64),
+            (Some("priority"), 4.6935_f64),
+            (Some("fast"), 4.6935_f64),
+            (Some("flex"), 1.173375_f64),
+        ];
+        for (tier, expected) in cases {
+            let cost = estimate_cost_with_rules_and_reasoning_for_service_tier(
+                &[],
+                Some("openai/gpt-6"),
+                273_000,
+                173_000,
+                10,
+                0,
+                tier,
+            );
+            assert_eq!(cost.price_status, "ok");
+            assert_close(cost.cost_usd.expect("cost"), expected);
+        }
     }
 
     #[test]
