@@ -1,6 +1,6 @@
 use codexmanager_core::storage::{now_ts, ModelPriceRule, Storage};
 
-pub(crate) const PRICE_SEED_VERSION: &str = "2026-09-05-sub2api-gpt6";
+pub(crate) const PRICE_SEED_VERSION: &str = "2026-09-23-sub2api-gpt6-sol-luna";
 
 #[derive(Debug, Clone, Copy)]
 struct PriceSeed {
@@ -47,6 +47,30 @@ const PRICE_SEEDS: &[PriceSeed] = &[
         long_context_input_price_per_1m: Some(20.0),
         long_context_cached_input_price_per_1m: Some(2.0),
         long_context_output_price_per_1m: Some(75.0),
+        source_url: OPENAI_PRICE_SOURCE,
+    },
+    PriceSeed {
+        provider: "openai",
+        model_pattern: "gpt-6-sol",
+        input_price_per_1m: 2.0,
+        cached_input_price_per_1m: Some(0.2),
+        output_price_per_1m: 10.0,
+        long_context_threshold_tokens: Some(272_000),
+        long_context_input_price_per_1m: Some(4.0),
+        long_context_cached_input_price_per_1m: Some(0.4),
+        long_context_output_price_per_1m: Some(15.0),
+        source_url: OPENAI_PRICE_SOURCE,
+    },
+    PriceSeed {
+        provider: "openai",
+        model_pattern: "gpt-6-luna",
+        input_price_per_1m: 0.1,
+        cached_input_price_per_1m: Some(0.01),
+        output_price_per_1m: 0.5,
+        long_context_threshold_tokens: Some(272_000),
+        long_context_input_price_per_1m: Some(0.2),
+        long_context_cached_input_price_per_1m: Some(0.02),
+        long_context_output_price_per_1m: Some(0.75),
         source_url: OPENAI_PRICE_SOURCE,
     },
     PriceSeed {
@@ -555,13 +579,15 @@ fn canonical_model_for_pricing(model: &str) -> String {
     }
 }
 
-fn is_gpt6_astra_model(model: &str) -> bool {
+fn is_gpt6_model(model: &str) -> bool {
     let normalized = canonical_model_for_pricing(model);
-    normalized == "gpt-6-astra" || normalized.starts_with("gpt-6-astra-")
+    ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]
+        .iter()
+        .any(|family| normalized == *family || normalized.starts_with(&format!("{family}-")))
 }
 
 fn gpt6_service_tier_multiplier(model: &str, service_tier: Option<&str>) -> f64 {
-    if !is_gpt6_astra_model(model) {
+    if !is_gpt6_model(model) {
         return 1.0;
     }
     match service_tier
@@ -1099,6 +1125,86 @@ mod tests {
             assert_eq!(cost.price_status, "ok");
             assert_close(cost.cost_usd.expect("cost"), expected);
         }
+    }
+
+    #[test]
+    fn matches_gpt_6_sol_and_luna_prices_across_context_and_service_tiers() {
+        let cases = [
+            ("gpt-6-sol", 2.0, 0.2, 10.0, 4.0, 0.4, 15.0),
+            ("gpt-6-luna", 0.1, 0.01, 0.5, 0.2, 0.02, 0.75),
+        ];
+        for (model, input, cached, output, long_input, long_cached, long_output) in cases {
+            let aliases = [
+                model.to_string(),
+                format!("openai/{model}"),
+                format!("{model}-2026-09-20"),
+            ];
+            for alias in aliases.iter().map(String::as_str) {
+                let standard = resolve_model_price(alias, 272_000).expect("short context price");
+                assert_close(standard.input_price_per_1m, input);
+                assert_close(standard.cached_input_price_per_1m, cached);
+                assert_close(standard.output_price_per_1m, output);
+
+                let long = resolve_model_price(alias, 272_001).expect("long context price");
+                assert_close(long.input_price_per_1m, long_input);
+                assert_close(long.cached_input_price_per_1m, long_cached);
+                assert_close(long.output_price_per_1m, long_output);
+            }
+
+            let standard = estimate_cost_with_rules_and_reasoning_for_service_tier(
+                &[],
+                Some(model),
+                300_000,
+                100_000,
+                10_000,
+                0,
+                None,
+            );
+            let fast = estimate_cost_with_rules_and_reasoning_for_service_tier(
+                &[],
+                Some(model),
+                300_000,
+                100_000,
+                10_000,
+                0,
+                Some("fast"),
+            );
+            let flex = estimate_cost_with_rules_and_reasoning_for_service_tier(
+                &[],
+                Some(model),
+                300_000,
+                100_000,
+                10_000,
+                0,
+                Some("flex"),
+            );
+            let standard_cost = standard.cost_usd.expect("standard estimate");
+            assert_close(fast.cost_usd.expect("fast estimate"), standard_cost * 2.0);
+            assert_close(flex.cost_usd.expect("flex estimate"), standard_cost * 0.5);
+        }
+    }
+
+    #[test]
+    fn seeds_gpt_6_sol_and_luna_price_rules_into_storage() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("initialize storage");
+        let rules = load_enabled_price_rules(&storage).expect("seed and load prices");
+
+        for (model, input, cached, output) in [
+            ("gpt-6-sol", 2.0_f64, 0.2_f64, 10.0_f64),
+            ("gpt-6-luna", 0.1_f64, 0.01_f64, 0.5_f64),
+        ] {
+            let price = resolve_model_price_from_rules(&rules, model, 0).expect("seeded price");
+            assert_close(price.input_price_per_1m, input);
+            assert_close(price.cached_input_price_per_1m, cached);
+            assert_close(price.output_price_per_1m, output);
+        }
+        assert!(
+            storage
+                .count_model_price_rules_for_seed(PRICE_SEED_VERSION)
+                .expect("count current price seeds") as usize
+                >= PRICE_SEEDS.len()
+        );
     }
 
     #[test]

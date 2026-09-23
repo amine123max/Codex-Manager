@@ -344,6 +344,94 @@ fn gpt6_astra_repricing_migration_updates_aliases_tiers_and_windows() {
 }
 
 #[test]
+fn gpt6_sol_luna_repricing_migration_updates_aliases_tiers_and_windows() {
+    let storage = Storage::open_in_memory().expect("open");
+    storage.init().expect("init");
+    let created_at = now_ts();
+    let cases: [(&str, Option<&str>, i64, i64, i64, f64); 4] = [
+        ("gpt-6-sol", None, 1_000, 200, 100, 0.00264),
+        (
+            "openai/gpt-6_sol-2026-09-23",
+            Some("priority"),
+            1_000,
+            200,
+            100,
+            0.00528,
+        ),
+        ("gpt-6-luna", Some("flex"), 1_000, 200, 100, 0.000066),
+        (
+            "gpt-6-luna-2026-09-23",
+            None,
+            300_000,
+            100_000,
+            10_000,
+            0.0495,
+        ),
+    ];
+    for (index, (model, service_tier, input_tokens, cached_tokens, output_tokens, _)) in
+        cases.iter().enumerate()
+    {
+        let log = RequestLog {
+            account_id: Some("acc-gpt6-sol-luna-reprice".to_string()),
+            request_path: "/v1/responses".to_string(),
+            method: "POST".to_string(),
+            model: Some((*model).to_string()),
+            effective_service_tier: service_tier.map(|value| value.to_string()),
+            status_code: Some(200),
+            created_at: created_at + index as i64,
+            ..Default::default()
+        };
+        let stat = RequestTokenStat {
+            account_id: log.account_id.clone(),
+            model: log.model.clone(),
+            input_tokens: Some(*input_tokens),
+            cached_input_tokens: Some(*cached_tokens),
+            output_tokens: Some(*output_tokens),
+            total_tokens: Some(*input_tokens + *output_tokens),
+            estimated_cost_usd: Some(0.0),
+            created_at: log.created_at,
+            ..Default::default()
+        };
+        storage
+            .insert_request_log_with_token_stat(&log, &stat)
+            .expect("insert old GPT-6 Sol/Luna usage");
+    }
+
+    let migration = include_str!("../../../migrations/073_reprice_gpt6_sol_luna_usage.sql");
+    for _ in 0..2 {
+        storage
+            .conn
+            .execute_batch(migration)
+            .expect("apply GPT-6 Sol/Luna repricing migration");
+        let costs = storage
+            .conn
+            .prepare(
+                "SELECT estimated_cost_usd FROM request_token_stats ORDER BY request_log_id ASC",
+            )
+            .expect("prepare GPT-6 Sol/Luna costs")
+            .query_map([], |row| row.get::<_, f64>(0))
+            .expect("query GPT-6 Sol/Luna costs")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect GPT-6 Sol/Luna costs");
+        assert_eq!(costs.len(), cases.len());
+        for (actual, (_, _, _, _, _, expected)) in costs.iter().zip(cases.iter()) {
+            assert!((actual - expected).abs() < 1e-12);
+        }
+
+        let usage = storage
+            .summarize_request_token_stats_by_account()
+            .expect("read repriced GPT-6 Sol/Luna account usage")
+            .into_iter()
+            .find(|item| item.account_id == "acc-gpt6-sol-luna-reprice")
+            .expect("repriced GPT-6 Sol/Luna account usage");
+        let total = cases.iter().map(|(_, _, _, _, _, cost)| cost).sum::<f64>();
+        assert!((usage.usage.estimated_cost_usd - total).abs() < 1e-12);
+        assert!((usage.primary_window.estimated_cost_usd - total).abs() < 1e-12);
+        assert!((usage.secondary_window.estimated_cost_usd - total).abs() < 1e-12);
+    }
+}
+
+#[test]
 fn account_billing_window_backfill_restores_recent_persisted_stats() {
     let storage = Storage::open_in_memory().expect("open");
     storage.init().expect("init");

@@ -1084,6 +1084,10 @@ impl Storage {
             "072_reprice_gpt6_astra_usage",
             include_str!("../../migrations/072_reprice_gpt6_astra_usage.sql"),
         )?;
+        self.apply_sql_migration(
+            "073_reprice_gpt6_sol_luna_usage",
+            include_str!("../../migrations/073_reprice_gpt6_sol_luna_usage.sql"),
+        )?;
         self.ensure_api_key_rotation_columns()?;
         self.ensure_aggregate_apis_table()?;
         self.ensure_aggregate_api_supplier_model_tables()?;
