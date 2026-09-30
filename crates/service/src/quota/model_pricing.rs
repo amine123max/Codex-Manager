@@ -1,6 +1,6 @@
 use codexmanager_core::storage::{now_ts, ModelPriceRule, Storage};
 
-pub(crate) const PRICE_SEED_VERSION: &str = "2026-09-23-sub2api-gpt6-sol-luna";
+pub(crate) const PRICE_SEED_VERSION: &str = "2026-09-30-openai-gpt61-sol";
 
 #[derive(Debug, Clone, Copy)]
 struct PriceSeed {
@@ -37,6 +37,18 @@ const ANTHROPIC_PRICE_SOURCE: &str = "https://docs.claude.com/en/docs/about-clau
 const GEMINI_PRICE_SOURCE: &str = "https://ai.google.dev/gemini-api/docs/pricing";
 
 const PRICE_SEEDS: &[PriceSeed] = &[
+    PriceSeed {
+        provider: "openai",
+        model_pattern: "gpt-6.1-sol",
+        input_price_per_1m: 2.0,
+        cached_input_price_per_1m: Some(0.1),
+        output_price_per_1m: 10.0,
+        long_context_threshold_tokens: Some(272_000),
+        long_context_input_price_per_1m: Some(4.0),
+        long_context_cached_input_price_per_1m: Some(0.2),
+        long_context_output_price_per_1m: Some(15.0),
+        source_url: OPENAI_PRICE_SOURCE,
+    },
     PriceSeed {
         provider: "openai",
         model_pattern: "gpt-6-astra",
@@ -581,7 +593,7 @@ fn canonical_model_for_pricing(model: &str) -> String {
 
 fn is_gpt6_model(model: &str) -> bool {
     let normalized = canonical_model_for_pricing(model);
-    ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]
+    ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
         .iter()
         .any(|family| normalized == *family || normalized.starts_with(&format!("{family}-")))
 }
@@ -1130,6 +1142,7 @@ mod tests {
     #[test]
     fn matches_gpt_6_sol_and_luna_prices_across_context_and_service_tiers() {
         let cases = [
+            ("gpt-6.1-sol", 2.0, 0.1, 10.0, 4.0, 0.2, 15.0),
             ("gpt-6-sol", 2.0, 0.2, 10.0, 4.0, 0.4, 15.0),
             ("gpt-6-luna", 0.1, 0.01, 0.5, 0.2, 0.02, 0.75),
         ];
@@ -1191,6 +1204,7 @@ mod tests {
         let rules = load_enabled_price_rules(&storage).expect("seed and load prices");
 
         for (model, input, cached, output) in [
+            ("gpt-6.1-sol", 2.0_f64, 0.1_f64, 10.0_f64),
             ("gpt-6-sol", 2.0_f64, 0.2_f64, 10.0_f64),
             ("gpt-6-luna", 0.1_f64, 0.01_f64, 0.5_f64),
         ] {
