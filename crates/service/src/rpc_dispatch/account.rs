@@ -88,6 +88,7 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
                 super::i64_param(req, "quotaCapacityPrimaryWindowTokens");
             let quota_capacity_secondary_window_tokens =
                 super::i64_param(req, "quotaCapacitySecondaryWindowTokens");
+            let weekly_quota_limit_tokens = super::i64_param(req, "weeklyQuotaLimitTokens");
             super::ok_or_error(account_update::update_account(
                 account_id,
                 sort,
@@ -99,6 +100,7 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
                 model_slugs,
                 quota_capacity_primary_window_tokens,
                 quota_capacity_secondary_window_tokens,
+                weekly_quota_limit_tokens,
             ))
         }
         "account/warmup" => {

@@ -317,6 +317,7 @@ fn to_account_summary_with_reason(
     model_slugs: Vec<String>,
     quota_capacity_primary_window_tokens: Option<i64>,
     quota_capacity_secondary_window_tokens: Option<i64>,
+    weekly_quota_limit_tokens: Option<i64>,
     quota_reset_available_count: Option<i64>,
     usage_request_count: i64,
     usage_input_tokens: i64,
@@ -353,6 +354,7 @@ fn to_account_summary_with_reason(
         model_slugs,
         quota_capacity_primary_window_tokens,
         quota_capacity_secondary_window_tokens,
+        weekly_quota_limit_tokens,
         quota_reset_available_count,
         usage_request_count,
         usage_input_tokens,
@@ -486,6 +488,9 @@ fn to_account_summaries(
         .into_iter()
         .map(|item| (item.account_id.clone(), item))
         .collect::<HashMap<String, AccountQuotaCapacityOverride>>();
+    let weekly_quota_limits = storage
+        .list_account_quota_limits()
+        .map_err(|err| format!("load account quota limits failed: {err}"))?;
     let billing_usage = storage
         .summarize_request_token_stats_by_account()
         .map_err(|err| format!("load account billing usage failed: {err}"))?
@@ -506,6 +511,7 @@ fn to_account_summaries(
                 &agent_identity_account_ids,
                 &model_slugs_by_account,
                 &quota_overrides,
+                &weekly_quota_limits,
                 &billing_usage,
             )
         })
@@ -538,6 +544,7 @@ fn map_account_summary(
     agent_identity_account_ids: &HashSet<String>,
     model_slugs_by_account: &HashMap<String, Vec<String>>,
     quota_overrides: &HashMap<String, AccountQuotaCapacityOverride>,
+    weekly_quota_limits: &HashMap<String, i64>,
     billing_usage: &HashMap<String, AccountTokenUsageSummary>,
 ) -> AccountSummary {
     let account_id = account.id.clone();
@@ -597,6 +604,7 @@ fn map_account_summary(
         model_slugs,
         quota_override.and_then(|value| value.primary_window_tokens),
         quota_override.and_then(|value| value.secondary_window_tokens),
+        weekly_quota_limits.get(&account_id).copied(),
         quota_reset_available_count,
         billing.map(|value| value.request_count).unwrap_or(0),
         billing.map(|value| value.input_tokens).unwrap_or(0),

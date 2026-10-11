@@ -25,7 +25,7 @@ use super::{
     save_persisted_app_setting, save_persisted_bool_setting, sync_runtime_settings_from_storage,
     APP_SETTING_AUTHOR_SERVER_RECOMMENDATIONS_KEY, APP_SETTING_AUTHOR_SPONSORS_KEY,
     APP_SETTING_CLOSE_TO_TRAY_ON_CLOSE_KEY, APP_SETTING_GATEWAY_ACCOUNT_MAX_INFLIGHT_KEY,
-    APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY, APP_SETTING_GATEWAY_COMPACT_MODEL_FORWARD_RULES_KEY,
+    APP_SETTING_GATEWAY_COMPACT_MODEL_FORWARD_RULES_KEY,
     APP_SETTING_GATEWAY_FREE_ACCOUNT_MAX_MODEL_KEY, APP_SETTING_GATEWAY_MODEL_FORWARD_RULES_KEY,
     APP_SETTING_GATEWAY_ORIGINATOR_KEY, APP_SETTING_GATEWAY_QUOTA_GUARD_KEY,
     APP_SETTING_GATEWAY_RESIDENCY_REQUIREMENT_KEY, APP_SETTING_GATEWAY_ROUTE_STRATEGY_KEY,
@@ -458,7 +458,7 @@ fn persist_current_snapshot(
     upstream_stream_timeout_ms: u64,
     upstream_total_timeout_ms: u64,
     sse_keepalive_interval_ms: u64,
-    background_tasks_raw: &str,
+    _background_tasks_raw: &str,
     env_overrides: &BTreeMap<String, String>,
 ) {
     let _ = save_persisted_bool_setting(APP_SETTING_UPDATE_AUTO_CHECK_KEY, update_auto_check);
@@ -561,10 +561,7 @@ fn persist_current_snapshot(
         APP_SETTING_GATEWAY_SSE_KEEPALIVE_INTERVAL_MS_KEY,
         Some(&sse_keepalive_interval_ms.to_string()),
     );
-    let _ = save_persisted_app_setting(
-        APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY,
-        Some(background_tasks_raw),
-    );
+    let _ = super::super::gateway::persist_current_background_tasks_snapshot();
     let _ = save_env_overrides_value(env_overrides);
 }
 

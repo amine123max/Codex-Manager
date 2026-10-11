@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod account_manager;
 mod account_agent_identities;
 mod account_metadata;
+mod account_quota_limits;
 mod account_subscriptions;
 mod accounts;
 mod aggregate_apis;
@@ -1080,6 +1081,11 @@ impl Storage {
             include_str!("../../migrations/070_account_agent_identities.sql"),
             |s| s.ensure_account_agent_identities_table(),
         )?;
+        self.apply_sql_or_compat_migration(
+            "071_account_quota_limits",
+            include_str!("../../migrations/071_account_quota_limits.sql"),
+            |s| s.ensure_account_quota_limits_table(),
+        )?;
         self.apply_sql_migration(
             "072_reprice_gpt6_astra_usage",
             include_str!("../../migrations/072_reprice_gpt6_astra_usage.sql"),
@@ -1106,6 +1112,7 @@ impl Storage {
         self.ensure_model_catalog_models_table()?;
         self.ensure_account_subscriptions_table()?;
         self.ensure_account_agent_identities_table()?;
+        self.ensure_account_quota_limits_table()?;
         self.ensure_quota_pool_tables()?;
         self.ensure_account_manager_tables()?;
         self.ensure_model_source_tables()?;

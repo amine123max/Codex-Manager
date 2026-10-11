@@ -46,6 +46,7 @@ macro_rules! invoke_handler {
             crate::commands::usage::service_usage_aggregate,
             crate::commands::usage::service_usage_refresh,
             crate::commands::usage::service_usage_quota_reset,
+            crate::commands::usage::service_usage_reset_credits,
             // quota
             crate::commands::quota::service_quota_overview,
             crate::commands::quota::service_quota_model_usage,

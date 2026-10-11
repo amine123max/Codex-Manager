@@ -441,6 +441,23 @@ export function useAccounts() {
     },
   });
 
+  const queryResetCreditsMutation = useMutation({
+    mutationFn: (accountId: string) => accountClient.queryResetCredits(accountId),
+    onSuccess: (availableCount: number | null) => {
+      toast.success(
+        availableCount == null
+          ? t("重置次数查询完成")
+          : t("剩余重置次数：{count}", { count: availableCount }),
+      );
+    },
+    onError: (error: unknown) => {
+      toast.error(`${t("查询重置次数失败")}: ${getAppErrorMessage(error)}`);
+    },
+    onSettled: async () => {
+      await invalidateAll();
+    },
+  });
+
   const refreshAllAccountRtMutation = useMutation({
     mutationFn: () => accountClient.refreshAllChatgptAuthTokens(),
     onSuccess: (result: RefreshAllRtResult) => {
@@ -561,6 +578,7 @@ export function useAccounts() {
       modelSlugs,
       quotaCapacityPrimaryWindowTokens,
       quotaCapacitySecondaryWindowTokens,
+      weeklyQuotaLimitTokens,
     }: {
       accountId: string;
       label?: string | null;
@@ -570,6 +588,7 @@ export function useAccounts() {
       modelSlugs?: string[] | null;
       quotaCapacityPrimaryWindowTokens?: number | null;
       quotaCapacitySecondaryWindowTokens?: number | null;
+      weeklyQuotaLimitTokens?: number | null;
     }) =>
       accountClient.updateProfile(accountId, {
         label,
@@ -579,6 +598,7 @@ export function useAccounts() {
         modelSlugs,
         quotaCapacityPrimaryWindowTokens,
         quotaCapacitySecondaryWindowTokens,
+        weeklyQuotaLimitTokens,
       }),
     onSuccess: async () => {
       await invalidateAll();
@@ -780,6 +800,15 @@ export function useAccounts() {
       }
       resetAccountQuotaMutation.mutate(targetAccountId);
     },
+    queryAccountResetCredits: (accountId: string) => {
+      if (!ensureServiceReady("查询重置次数")) return;
+      const targetAccountId = accountId.trim();
+      if (!targetAccountId) {
+        toast.error(t("未找到当前账号，请刷新后重试"));
+        return;
+      }
+      queryResetCreditsMutation.mutate(targetAccountId);
+    },
     refreshAllAccountRt: () => {
       if (!ensureServiceReady("刷新 AT/RT")) return;
       if (!accounts.length) {
@@ -856,6 +885,7 @@ export function useAccounts() {
         modelSlugs?: string[] | null;
         quotaCapacityPrimaryWindowTokens?: number | null;
         quotaCapacitySecondaryWindowTokens?: number | null;
+        weeklyQuotaLimitTokens?: number | null;
       }
     ) => {
       if (!ensureServiceReady("更新账号信息")) return;
@@ -882,6 +912,11 @@ export function useAccounts() {
       resetAccountQuotaMutation.isPending &&
       typeof resetAccountQuotaMutation.variables === "string"
         ? resetAccountQuotaMutation.variables
+        : "",
+    isQueryingResetCreditsAccountId:
+      queryResetCreditsMutation.isPending &&
+      typeof queryResetCreditsMutation.variables === "string"
+        ? queryResetCreditsMutation.variables
         : "",
     isRefreshingAllRtAccounts: refreshAllAccountRtMutation.isPending,
     isRefreshingAllAccounts: refreshAllMutation.isPending,

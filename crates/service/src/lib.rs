@@ -35,6 +35,7 @@ pub(crate) use account::plan as account_plan;
 pub(crate) use account::status as account_status;
 pub(crate) use account::update as account_update;
 pub(crate) use account::warmup as account_warmup;
+pub(crate) use account::weekly_quota as account_weekly_quota;
 pub(crate) use aggregate_api::{
     create_aggregate_api, delete_aggregate_api, delete_aggregate_api_supplier_model,
     discover_aggregate_api_models, import_aggregate_api_supplier_models,

@@ -135,6 +135,7 @@ export interface AccountEditorState {
   currentModelSlugs: string;
   currentQuotaPrimaryWindowTokens: number | null;
   currentQuotaSecondaryWindowTokens: number | null;
+  currentWeeklyQuotaLimitTokens: number | null;
 }
 
 export type DeleteDialogState =

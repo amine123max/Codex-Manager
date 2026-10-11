@@ -1130,6 +1130,48 @@ pub(crate) fn consume_rate_limit_reset_credit(
     ))
 }
 
+pub(crate) fn fetch_rate_limit_reset_credit_details(
+    base_url: &str,
+    bearer: &str,
+    workspace_id: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    run_usage_future(fetch_rate_limit_reset_credit_details_async(
+        base_url,
+        bearer,
+        workspace_id,
+    ))
+}
+
+async fn fetch_rate_limit_reset_credit_details_async(
+    base_url: &str,
+    bearer: &str,
+    workspace_id: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let timeout = Duration::from_secs(20);
+    let url = format!(
+        "{}/rate-limit-reset-credits",
+        usage_endpoint(base_url).trim_end_matches("/usage")
+    );
+    let response = usage_http_client()
+        .get(url)
+        .timeout(timeout)
+        .header(
+            "Authorization",
+            crate::agent_identity::authorization_header_value(bearer),
+        )
+        .headers(build_rate_limit_reset_request_headers(workspace_id))
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+    if !response.status().is_success() {
+        // Only report the status; upstream bodies may contain private card identifiers.
+        return Err(format!("reset credit details HTTP {}", response.status()));
+    }
+    read_response_json(response, timeout)
+        .await
+        .map_err(|_| "invalid reset credit details JSON".to_string())
+}
+
 /// 函数 `fetch_account_subscription`
 ///
 /// 作者: gaohongshun
@@ -1228,9 +1270,23 @@ async fn fetch_usage_snapshot_async(
             status, &headers, &body, true,
         ));
     }
-    read_response_json(resp, USAGE_HTTP_TOTAL_TIMEOUT)
+    let mut value: serde_json::Value = read_response_json(resp, USAGE_HTTP_TOTAL_TIMEOUT)
         .await
-        .map_err(|e| format!("read usage endpoint json failed: {e}"))
+        .map_err(|e| format!("read usage endpoint json failed: {e}"))?;
+    // Keep expirations fresh during ordinary polling as well as manual queries.
+    // Accounts without available reset cards do not need an extra upstream call.
+    let count = value
+        .pointer("/rate_limit_reset_credits/available_count")
+        .or_else(|| value.pointer("/rateLimitResetCredits/availableCount"))
+        .and_then(|count| count.as_i64().or_else(|| count.as_str()?.parse().ok()));
+    if count.is_some_and(|count| count > 0) {
+        if let Ok(details) =
+            fetch_rate_limit_reset_credit_details_async(base_url, bearer, workspace_id).await
+        {
+            crate::usage::reset_credits::merge_reset_credit_details(&mut value, &details);
+        }
+    }
+    Ok(value)
 }
 
 async fn consume_rate_limit_reset_credit_async(

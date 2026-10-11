@@ -16,10 +16,26 @@ use super::{
     MIN_TOKEN_REFRESH_POLL_INTERVAL_SECS, MIN_USAGE_POLL_INTERVAL_SECS,
     TOKEN_REFRESH_POLLING_ENABLED, TOKEN_REFRESH_POLL_INTERVAL_SECS_ATOMIC, USAGE_POLLING_ENABLED,
     USAGE_POLL_INTERVAL_SECS, USAGE_REFRESH_WORKERS, USAGE_REFRESH_WORKERS_ENV,
-    WARMUP_CRON_ENABLED, WARMUP_CRON_EXPRESSION, WARMUP_CRON_SIGNAL,
+    WARMUP_CRON_ACCOUNT_IDS, WARMUP_CRON_ENABLED, WARMUP_CRON_EXPRESSION, WARMUP_CRON_SIGNAL,
+    WARMUP_INTERVAL,
 };
 
 use super::runner::validate_warmup_cron_expression;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct WarmupIntervalSettings {
+    pub interval_secs: u64,
+    pub repeat: bool,
+    pub next_run_at: i64,
+}
+
+pub(super) fn current_warmup_interval() -> WarmupIntervalSettings {
+    crate::lock_utils::lock_recover(
+        WARMUP_INTERVAL.get_or_init(|| std::sync::Mutex::new(WarmupIntervalSettings::default())),
+        "warmup_interval",
+    )
+    .clone()
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +53,10 @@ pub(crate) struct BackgroundTasksSettings {
     http_stream_worker_min: usize,
     warmup_cron_enabled: bool,
     warmup_cron_expression: String,
+    warmup_cron_account_ids: Vec<String>,
+    warmup_interval_secs: u64,
+    warmup_repeat: bool,
+    warmup_next_run_at: i64,
     requires_restart_keys: Vec<&'static str>,
 }
 
@@ -55,6 +75,10 @@ pub(crate) struct BackgroundTasksSettingsPatch {
     pub http_stream_worker_min: Option<usize>,
     pub warmup_cron_enabled: Option<bool>,
     pub warmup_cron_expression: Option<String>,
+    pub warmup_cron_account_ids: Option<Vec<String>>,
+    pub warmup_interval_secs: Option<u64>,
+    pub warmup_repeat: Option<bool>,
+    pub warmup_next_run_at: Option<i64>,
 }
 
 /// 函数 `background_tasks_settings`
@@ -72,6 +96,7 @@ pub(crate) fn background_tasks_settings() -> BackgroundTasksSettings {
     ensure_background_tasks_config_loaded();
     let warmup_cron_enabled = WARMUP_CRON_ENABLED.load(Ordering::Relaxed);
     let warmup_cron_expression = current_mutex_string(&WARMUP_CRON_EXPRESSION);
+    let interval = current_warmup_interval();
     BackgroundTasksSettings {
         usage_polling_enabled: USAGE_POLLING_ENABLED.load(Ordering::Relaxed),
         usage_poll_interval_secs: USAGE_POLL_INTERVAL_SECS.load(Ordering::Relaxed),
@@ -87,6 +112,10 @@ pub(crate) fn background_tasks_settings() -> BackgroundTasksSettings {
         http_stream_worker_min: HTTP_STREAM_WORKER_MIN.load(Ordering::Relaxed),
         warmup_cron_enabled,
         warmup_cron_expression,
+        warmup_cron_account_ids: current_warmup_cron_account_ids(),
+        warmup_interval_secs: interval.interval_secs,
+        warmup_repeat: interval.repeat,
+        warmup_next_run_at: interval.next_run_at,
         requires_restart_keys: BACKGROUND_TASK_RESTART_REQUIRED_KEYS.to_vec(),
     }
 }
@@ -186,6 +215,44 @@ pub(crate) fn set_background_tasks_settings(
         std::env::set_var(ENV_WARMUP_CRON_EXPRESSION, expression);
         warmup_cron_changed = true;
     }
+    if let Some(ids) = patch.warmup_cron_account_ids {
+        let mut normalized = ids
+            .into_iter()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect::<Vec<_>>();
+        normalized.sort();
+        normalized.dedup();
+        *crate::lock_utils::lock_recover(
+            WARMUP_CRON_ACCOUNT_IDS.get_or_init(|| std::sync::Mutex::new(Vec::new())),
+            "warmup_cron_account_ids",
+        ) = normalized;
+        warmup_cron_changed = true;
+    }
+    if patch.warmup_interval_secs.is_some()
+        || patch.warmup_repeat.is_some()
+        || patch.warmup_next_run_at.is_some()
+    {
+        let mut interval = crate::lock_utils::lock_recover(
+            WARMUP_INTERVAL
+                .get_or_init(|| std::sync::Mutex::new(WarmupIntervalSettings::default())),
+            "warmup_interval",
+        );
+        if let Some(secs) = patch.warmup_interval_secs {
+            interval.interval_secs = secs;
+        }
+        if let Some(repeat) = patch.warmup_repeat {
+            interval.repeat = repeat;
+        }
+        if let Some(next) = patch.warmup_next_run_at {
+            interval.next_run_at = next;
+        }
+        if interval.interval_secs > 0 && interval.next_run_at <= 0 {
+            interval.next_run_at =
+                codexmanager_core::storage::now_ts() + interval.interval_secs as i64;
+        }
+        warmup_cron_changed = true;
+    }
     if warmup_cron_changed {
         notify_warmup_cron_changed();
     }
@@ -201,6 +268,22 @@ pub(crate) fn validate_background_tasks_settings_patch(
     let target_warmup_cron_enabled = patch
         .warmup_cron_enabled
         .unwrap_or_else(|| WARMUP_CRON_ENABLED.load(Ordering::Relaxed));
+    let interval = patch
+        .warmup_interval_secs
+        .unwrap_or_else(|| current_warmup_interval().interval_secs);
+    if interval > 31_536_000 {
+        return Err("warmup interval must not exceed one year".to_string());
+    }
+    if target_warmup_cron_enabled && interval > 0 {
+        let ids = patch
+            .warmup_cron_account_ids
+            .clone()
+            .unwrap_or_else(current_warmup_cron_account_ids);
+        if ids.iter().all(|id| id.trim().is_empty()) {
+            return Err("select at least one account for scheduled warmup".to_string());
+        }
+        return Ok(());
+    }
     let patched_warmup_cron_expression = patch
         .warmup_cron_expression
         .as_deref()
@@ -354,6 +437,14 @@ pub(super) fn current_mutex_string(
 fn set_mutex_string(slot: &'static std::sync::OnceLock<std::sync::Mutex<String>>, value: &str) {
     let guard = slot.get_or_init(|| std::sync::Mutex::new(value.to_string()));
     *crate::lock_utils::lock_recover(guard, "background_task_string") = value.to_string();
+}
+
+pub(super) fn current_warmup_cron_account_ids() -> Vec<String> {
+    crate::lock_utils::lock_recover(
+        WARMUP_CRON_ACCOUNT_IDS.get_or_init(|| std::sync::Mutex::new(Vec::new())),
+        "warmup_cron_account_ids",
+    )
+    .clone()
 }
 
 pub(super) fn warmup_cron_signal_version() -> u64 {

@@ -81,6 +81,7 @@ fn account_update_payload(
     model_slugs: Option<Vec<String>>,
     quota_capacity_primary_window_tokens: Option<i64>,
     quota_capacity_secondary_window_tokens: Option<i64>,
+    weekly_quota_limit_tokens: Option<i64>,
 ) -> Option<serde_json::Value> {
     let mut params = serde_json::Map::new();
     params.insert("accountId".to_string(), serde_json::json!(account_id));
@@ -117,6 +118,12 @@ fn account_update_payload(
     if let Some(value) = quota_capacity_secondary_window_tokens {
         params.insert(
             "quotaCapacitySecondaryWindowTokens".to_string(),
+            serde_json::json!(value),
+        );
+    }
+    if let Some(value) = weekly_quota_limit_tokens {
+        params.insert(
+            "weeklyQuotaLimitTokens".to_string(),
             serde_json::json!(value),
         );
     }
@@ -271,6 +278,7 @@ pub async fn service_account_update(
     model_slugs: Option<Vec<String>>,
     quota_capacity_primary_window_tokens: Option<i64>,
     quota_capacity_secondary_window_tokens: Option<i64>,
+    weekly_quota_limit_tokens: Option<i64>,
 ) -> Result<serde_json::Value, String> {
     rpc_call_in_background(
         "account/update",
@@ -286,6 +294,7 @@ pub async fn service_account_update(
             model_slugs,
             quota_capacity_primary_window_tokens,
             quota_capacity_secondary_window_tokens,
+            weekly_quota_limit_tokens,
         ),
     )
     .await
@@ -345,6 +354,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .expect("payload");
         let expected = serde_json::json!({
@@ -370,6 +380,7 @@ mod tests {
         let actual = account_update_payload(
             "acc-1".to_string(),
             Some(5),
+            None,
             None,
             None,
             None,
@@ -411,6 +422,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .expect("payload");
         let expected = serde_json::json!({
@@ -425,6 +437,7 @@ mod tests {
             "acc-1".to_string(),
             None,
             Some(true),
+            None,
             None,
             None,
             None,

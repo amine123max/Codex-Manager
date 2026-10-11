@@ -30,7 +30,7 @@ fn usage_status_updates_blocked(storage: &Storage, account_id: &str, current_sta
 ///
 /// # 返回
 /// 返回函数执行结果
-fn usage_snapshots_retain_per_account() -> usize {
+pub(crate) fn usage_snapshots_retain_per_account() -> usize {
     std::env::var(USAGE_SNAPSHOTS_RETAIN_PER_ACCOUNT_ENV)
         .ok()
         .and_then(|raw| raw.trim().parse::<usize>().ok())
@@ -75,7 +75,21 @@ pub(crate) fn apply_status_from_snapshot(
 
     match availability {
         Availability::Available => {
-            set_account_status(storage, &record.account_id, "active", "usage_ok");
+            // 本地周额度已耗尽的账号不能因上游用量正常而恢复为 active。
+            if crate::account_weekly_quota::is_weekly_quota_exceeded(
+                storage,
+                &record.account_id,
+                now_ts(),
+            ) {
+                set_account_status(
+                    storage,
+                    &record.account_id,
+                    "limited",
+                    crate::account_weekly_quota::WEEKLY_QUOTA_EXCEEDED_REASON,
+                );
+            } else {
+                set_account_status(storage, &record.account_id, "active", "usage_ok");
+            }
         }
         Availability::Unavailable("usage_exhausted_primary" | "usage_exhausted_secondary") => {
             set_account_status(

@@ -53,6 +53,10 @@ pub struct BackgroundTasksInput {
     pub http_stream_worker_min: Option<usize>,
     pub warmup_cron_enabled: Option<bool>,
     pub warmup_cron_expression: Option<String>,
+    pub warmup_cron_account_ids: Option<Vec<String>>,
+    pub warmup_interval_secs: Option<u64>,
+    pub warmup_repeat: Option<bool>,
+    pub warmup_next_run_at: Option<i64>,
 }
 
 impl BackgroundTasksInput {
@@ -82,6 +86,10 @@ impl BackgroundTasksInput {
             http_stream_worker_min: self.http_stream_worker_min,
             warmup_cron_enabled: self.warmup_cron_enabled,
             warmup_cron_expression: self.warmup_cron_expression,
+            warmup_cron_account_ids: self.warmup_cron_account_ids,
+            warmup_interval_secs: self.warmup_interval_secs,
+            warmup_repeat: self.warmup_repeat,
+            warmup_next_run_at: self.warmup_next_run_at,
         }
     }
 }
@@ -626,13 +634,105 @@ pub fn current_gateway_sse_keepalive_interval_ms() -> u64 {
 pub fn set_gateway_background_tasks(
     input: BackgroundTasksInput,
 ) -> Result<serde_json::Value, String> {
+    let _guard = crate::lock_utils::lock_recover(
+        &BACKGROUND_SETTINGS_UPDATE_LOCK,
+        "background_settings_update",
+    );
+    set_gateway_background_tasks_unlocked(input)
+}
+
+static BACKGROUND_SETTINGS_UPDATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(super) fn sync_background_tasks_from_storage() {
+    let _guard = crate::lock_utils::lock_recover(
+        &BACKGROUND_SETTINGS_UPDATE_LOCK,
+        "background_settings_update",
+    );
+    let Some(raw) = super::get_persisted_app_setting(APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY)
+    else {
+        return;
+    };
+    match serde_json::from_str::<BackgroundTasksInput>(&raw) {
+        Ok(input) => {
+            let patch = input.into_patch();
+            if let Err(err) = usage_refresh::validate_background_tasks_settings_patch(&patch) {
+                log::warn!("sync persisted background tasks failed: {err}");
+            } else {
+                usage_refresh::set_background_tasks_settings(patch);
+            }
+        }
+        Err(err) => log::warn!("parse persisted background tasks failed: {err}"),
+    }
+}
+
+pub(super) fn persist_current_background_tasks_snapshot() -> Result<(), String> {
+    let _guard = crate::lock_utils::lock_recover(
+        &BACKGROUND_SETTINGS_UPDATE_LOCK,
+        "background_settings_update",
+    );
+    let raw = serde_json::to_string(&usage_refresh::background_tasks_settings())
+        .map_err(|err| err.to_string())?;
+    save_persisted_app_setting(APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY, Some(&raw))
+}
+
+fn set_gateway_background_tasks_unlocked(
+    input: BackgroundTasksInput,
+) -> Result<serde_json::Value, String> {
+    let previous = current_background_tasks_snapshot_value()?;
     let patch = input.into_patch();
     usage_refresh::validate_background_tasks_settings_patch(&patch)?;
     let applied = usage_refresh::set_background_tasks_settings(patch);
     let raw = serde_json::to_string(&applied)
         .map_err(|err| format!("serialize background tasks failed: {err}"))?;
-    save_persisted_app_setting(APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY, Some(&raw))?;
+    if let Err(err) =
+        save_persisted_app_setting(APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY, Some(&raw))
+    {
+        if let Ok(previous) = serde_json::from_value::<BackgroundTasksInput>(previous) {
+            usage_refresh::set_background_tasks_settings(previous.into_patch());
+        }
+        return Err(err);
+    }
     serde_json::to_value(applied).map_err(|err| err.to_string())
+}
+
+/// Persist the next run before executing, so one-shot plans do not repeat after restart.
+pub(crate) fn advance_warmup_interval(
+    next_run_at: i64,
+    interval_secs: u64,
+    repeat: bool,
+    ids: &[String],
+) -> Result<bool, String> {
+    let _guard = crate::lock_utils::lock_recover(
+        &BACKGROUND_SETTINGS_UPDATE_LOCK,
+        "background_settings_update",
+    );
+    let current = current_background_tasks_snapshot_value()?;
+    if next_run_at > codexmanager_core::storage::now_ts()
+        || current["warmupCronEnabled"].as_bool() != Some(true)
+        || current["warmupNextRunAt"].as_i64() != Some(next_run_at)
+        || current["warmupIntervalSecs"].as_u64() != Some(interval_secs)
+        || current["warmupRepeat"].as_bool() != Some(repeat)
+        || current["warmupCronAccountIds"] != serde_json::json!(ids)
+    {
+        return Ok(false);
+    }
+    let next = next_warmup_interval_run(
+        next_run_at,
+        interval_secs,
+        codexmanager_core::storage::now_ts(),
+    );
+    set_gateway_background_tasks_unlocked(BackgroundTasksInput {
+        warmup_cron_enabled: Some(repeat),
+        warmup_next_run_at: Some(if repeat { next } else { next_run_at }),
+        ..Default::default()
+    })?;
+    Ok(true)
+}
+
+fn next_warmup_interval_run(previous: i64, interval_secs: u64, now: i64) -> i64 {
+    let interval = interval_secs.max(1) as i64;
+    let skipped = now.saturating_sub(previous).max(0) / interval + 1;
+    previous.saturating_add(skipped.saturating_mul(interval))
 }
 
 /// 函数 `current_background_tasks_snapshot_value`
@@ -660,6 +760,102 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tiny_http::{Header, Response, Server};
+
+    #[test]
+    fn warmup_interval_skips_missed_ticks_without_drifting() {
+        assert_eq!(super::next_warmup_interval_run(100, 3600, 100), 3700);
+        assert_eq!(super::next_warmup_interval_run(100, 3600, 8000), 10900);
+    }
+
+    #[test]
+    fn scheduled_warmup_persists_selected_accounts_and_runs_once() {
+        let _guard = crate::test_env_guard();
+        let db_path = unique_temp_db_path();
+        let _db_env = EnvGuard::set("CODEXMANAGER_DB_PATH", Some(&db_path.to_string_lossy()));
+        crate::initialize_storage_if_needed().unwrap();
+        let previous = super::current_background_tasks_snapshot_value().unwrap();
+        let applied = super::set_gateway_background_tasks(super::BackgroundTasksInput {
+            warmup_cron_enabled: Some(true),
+            warmup_interval_secs: Some(1800),
+            warmup_repeat: Some(false),
+            warmup_next_run_at: Some(0),
+            warmup_cron_account_ids: Some(vec![" b ".into(), "a".into(), "a".into()]),
+            ..Default::default()
+        })
+        .unwrap();
+        let due = applied["warmupNextRunAt"].as_i64().unwrap();
+        assert!(due >= codexmanager_core::storage::now_ts() + 1799);
+        assert_eq!(
+            applied["warmupCronAccountIds"],
+            serde_json::json!(["a", "b"])
+        );
+        let ids = vec!["a".to_string(), "b".to_string()];
+        assert!(!super::advance_warmup_interval(due, 1800, false, &ids).unwrap());
+        let overdue = codexmanager_core::storage::now_ts() - 1;
+        super::set_gateway_background_tasks(super::BackgroundTasksInput {
+            warmup_next_run_at: Some(overdue),
+            ..Default::default()
+        })
+        .unwrap();
+        let raw = super::super::get_persisted_app_setting(
+            super::APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY,
+        )
+        .unwrap();
+        let restored: super::BackgroundTasksInput = serde_json::from_str(&raw).unwrap();
+        assert_eq!(restored.warmup_next_run_at, Some(overdue));
+        assert_eq!(restored.warmup_cron_account_ids.as_ref(), Some(&ids));
+        crate::usage_refresh::set_background_tasks_settings(restored.into_patch());
+        assert!(super::advance_warmup_interval(overdue, 1800, false, &ids).unwrap());
+        assert!(!super::advance_warmup_interval(overdue, 1800, false, &ids).unwrap());
+        let raw = super::super::get_persisted_app_setting(
+            super::APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap()["warmupCronEnabled"],
+            false
+        );
+        crate::usage_refresh::set_background_tasks_settings(
+            serde_json::from_value::<super::BackgroundTasksInput>(previous)
+                .unwrap()
+                .into_patch(),
+        );
+    }
+
+    #[test]
+    fn scheduled_warmup_repeat_advances_and_cancel_prevents_claim() {
+        let _guard = crate::test_env_guard();
+        let db_path = unique_temp_db_path();
+        let _db_env = EnvGuard::set("CODEXMANAGER_DB_PATH", Some(&db_path.to_string_lossy()));
+        crate::initialize_storage_if_needed().unwrap();
+        let previous = super::current_background_tasks_snapshot_value().unwrap();
+        let overdue = codexmanager_core::storage::now_ts() - 4000;
+        super::set_gateway_background_tasks(super::BackgroundTasksInput {
+            warmup_cron_enabled: Some(true),
+            warmup_interval_secs: Some(1800),
+            warmup_repeat: Some(true),
+            warmup_next_run_at: Some(overdue),
+            warmup_cron_account_ids: Some(vec!["a".into()]),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(super::advance_warmup_interval(overdue, 1800, true, &["a".into()]).unwrap());
+        let next = super::current_background_tasks_snapshot_value().unwrap()["warmupNextRunAt"]
+            .as_i64()
+            .unwrap();
+        assert!(next > codexmanager_core::storage::now_ts());
+        super::set_gateway_background_tasks(super::BackgroundTasksInput {
+            warmup_cron_enabled: Some(false),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(!super::advance_warmup_interval(next, 1800, true, &["a".into()]).unwrap());
+        crate::usage_refresh::set_background_tasks_settings(
+            serde_json::from_value::<super::BackgroundTasksInput>(previous)
+                .unwrap()
+                .into_patch(),
+        );
+    }
 
     struct EnvGuard {
         key: &'static str,

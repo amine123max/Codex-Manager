@@ -10,6 +10,7 @@ pub(crate) mod keepalive;
 pub(crate) mod list;
 #[path = "usage_read.rs"]
 pub(crate) mod read;
+pub(crate) mod reset_credits;
 #[path = "usage_refresh.rs"]
 pub(crate) mod refresh;
 #[path = "usage_scheduler.rs"]

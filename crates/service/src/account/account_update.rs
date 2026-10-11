@@ -24,6 +24,7 @@ pub(crate) fn update_account(
     model_slugs: Option<Vec<String>>,
     quota_capacity_primary_window_tokens: Option<i64>,
     quota_capacity_secondary_window_tokens: Option<i64>,
+    weekly_quota_limit_tokens: Option<i64>,
 ) -> Result<(), String> {
     // 更新账号排序或状态并记录事件
     let normalized_account_id = account_id.trim();
@@ -39,6 +40,7 @@ pub(crate) fn update_account(
     let model_assignment_requested = model_slugs.is_some();
     let quota_override_requested = quota_capacity_primary_window_tokens.is_some()
         || quota_capacity_secondary_window_tokens.is_some();
+    let weekly_quota_limit_requested = weekly_quota_limit_tokens.is_some();
 
     if sort.is_none()
         && preferred.is_none()
@@ -47,6 +49,7 @@ pub(crate) fn update_account(
         && !metadata_requested
         && !model_assignment_requested
         && !quota_override_requested
+        && !weekly_quota_limit_requested
     {
         return Err("missing account update fields".to_string());
     }
@@ -173,6 +176,29 @@ pub(crate) fn update_account(
             ),
             created_at: now,
         });
+    }
+
+    if let Some(weekly_limit) = weekly_quota_limit_tokens {
+        // <= 0 表示清除周额度上限
+        storage
+            .upsert_account_quota_limit(normalized_account_id, Some(weekly_limit))
+            .map_err(|e| e.to_string())?;
+        storage
+            .touch_account_updated_at(normalized_account_id)
+            .map_err(|e| e.to_string())?;
+        let _ = storage.insert_event(&Event {
+            account_id: Some(normalized_account_id.to_string()),
+            event_type: "account_weekly_quota_limit_update".to_string(),
+            message: format!("weeklyLimitTokens={weekly_limit}"),
+            created_at: now,
+        });
+        // 上限变化后立即重新评估：可能需要立刻限流，也可能需要解除限流。
+        if !crate::account_weekly_quota::enforce_weekly_quota_for_account(
+            &storage,
+            normalized_account_id,
+        ) {
+            crate::account_weekly_quota::recover_weekly_quota_limited_accounts(&storage);
+        }
     }
 
     Ok(())

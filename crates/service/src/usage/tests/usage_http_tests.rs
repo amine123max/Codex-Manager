@@ -11,6 +11,25 @@ use std::time::Duration;
 use tiny_http::{Header, Response, Server, StatusCode as TinyStatusCode};
 
 #[test]
+fn reset_credit_details_uses_read_only_get_and_workspace_headers() {
+    let (_guard, _restore) = usage_header_runtime_scope();
+    let server = Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    let handle = thread::spawn(move || {
+        let request = server.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        assert_eq!(request.method(), &tiny_http::Method::Get);
+        assert_eq!(request.url(), "/api/codex/rate-limit-reset-credits");
+        assert!(request.headers().iter().any(|header|
+            header.field.equiv("chatgpt-account-id") && header.value.as_str() == "workspace-test"));
+        request.respond(Response::from_string(r#"{"credits":[{"expires_at":"2027-01-01T00:00:00Z"}]}"#)
+            .with_header(Header::from_bytes("Content-Type", "application/json").unwrap())).unwrap();
+    });
+    let details = super::fetch_rate_limit_reset_credit_details(&addr, "test-token", Some("workspace-test")).unwrap();
+    handle.join().unwrap();
+    assert_eq!(details["credits"][0]["expires_at"], "2027-01-01T00:00:00Z");
+}
+
+#[test]
 fn accounts_check_snapshot_reconciles_k12_plan_with_free_subscription_plan() {
     let response: super::AccountsCheckResponse = serde_json::from_str(
         r#"{"accounts":{"workspace-k12":{"account":{"plan_type":"k12"},"entitlement":{"subscription_plan":"free","has_active_subscription":false}}}}"#,

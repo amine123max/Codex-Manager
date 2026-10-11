@@ -137,6 +137,14 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
                 http_stream_worker_min: usize_param(req, "httpStreamWorkerMin"),
                 warmup_cron_enabled: super::bool_param(req, "warmupCronEnabled"),
                 warmup_cron_expression: super::string_param(req, "warmupCronExpression"),
+                warmup_cron_account_ids: req
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("warmupCronAccountIds"))
+                    .and_then(|value| serde_json::from_value::<Vec<String>>(value.clone()).ok()),
+                warmup_interval_secs: u64_param(req, "warmupIntervalSecs"),
+                warmup_repeat: super::bool_param(req, "warmupRepeat"),
+                warmup_next_run_at: super::i64_param(req, "warmupNextRunAt"),
             };
             let input = crate::BackgroundTasksInput {
                 usage_polling_enabled: patch.usage_polling_enabled,
@@ -152,6 +160,10 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
                 http_stream_worker_min: patch.http_stream_worker_min,
                 warmup_cron_enabled: patch.warmup_cron_enabled,
                 warmup_cron_expression: patch.warmup_cron_expression,
+                warmup_cron_account_ids: patch.warmup_cron_account_ids,
+                warmup_interval_secs: patch.warmup_interval_secs,
+                warmup_repeat: patch.warmup_repeat,
+                warmup_next_run_at: patch.warmup_next_run_at,
             };
             super::value_or_error(crate::set_gateway_background_tasks(input))
         }

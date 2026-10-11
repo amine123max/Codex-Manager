@@ -132,6 +132,8 @@ fn collect_gateway_candidates_uncached(
     storage: &Storage,
     low_quota_mode: LowQuotaCandidateMode,
 ) -> Result<Vec<(Account, Token)>, String> {
+    // 周额度限流账号的窗口过期后要能自动回到候选池
+    crate::account_weekly_quota::recover_weekly_quota_limited_accounts(storage);
     // 选择可用账号作为网关上游候选
     let candidates = storage
         .list_gateway_candidates()
@@ -146,6 +148,7 @@ fn collect_gateway_candidates_uncached(
         }
         out.push((candidate_account, token));
     }
+    crate::account_weekly_quota::filter_weekly_quota_candidates(storage, &mut out);
     apply_quota_guard(storage, &mut out, low_quota_mode);
     if out.is_empty() {
         log_no_candidates(storage);

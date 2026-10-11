@@ -18,6 +18,7 @@ pub(crate) use env_overrides::{
 };
 pub(crate) use gateway::sync_gateway_user_agent_version_from_codex_latest;
 pub(crate) use gateway::QuotaGuardInput;
+pub(crate) use gateway::advance_warmup_interval;
 #[allow(unused_imports)]
 pub use gateway::{
     current_gateway_account_max_inflight, current_gateway_compact_model_forward_rules,

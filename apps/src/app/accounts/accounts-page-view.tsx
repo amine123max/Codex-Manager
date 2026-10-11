@@ -9,7 +9,6 @@ import {
   Download,
   FileUp,
   FolderOpen,
-  History,
   KeyRound,
   Loader2,
   MoreVertical,
@@ -23,6 +22,8 @@ import {
   Zap,
 } from "lucide-react";
 import { AddAccountModal } from "@/components/modals/add-account-modal";
+import { ResetCreditsButton } from "@/components/accounts/reset-credits-button";
+import { WarmupControls } from "@/components/accounts/warmup-controls";
 import { ConfirmDialog } from "@/components/modals/confirm-dialog";
 import UsageModal from "@/components/modals/usage-modal";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -146,10 +147,12 @@ export interface AccountsPageViewProps {
   modelWhitelistDraft: string;
   quotaPrimaryDraft: string;
   quotaSecondaryDraft: string;
+  weeklyQuotaDraft: string;
   isRefreshingAllAccounts: boolean;
   isRefreshingAccountId: string | null;
   isRefreshingRtAccountId: string | null;
   isResettingQuotaAccountId: string | null;
+  isQueryingResetCreditsAccountId: string | null;
   isRefreshingAllRtAccounts: boolean;
   isExporting: boolean;
   isWarmingUpAccounts: boolean;
@@ -177,6 +180,7 @@ export interface AccountsPageViewProps {
   setModelWhitelistDraft: Dispatch<SetStateAction<string>>;
   setQuotaPrimaryDraft: Dispatch<SetStateAction<string>>;
   setQuotaSecondaryDraft: Dispatch<SetStateAction<string>>;
+  setWeeklyQuotaDraft: Dispatch<SetStateAction<string>>;
   setPage: Dispatch<SetStateAction<number>>;
   handleSearchChange: (value: string) => void;
   handlePlanFilterChange: (value: string | null) => void;
@@ -207,6 +211,7 @@ export interface AccountsPageViewProps {
   refreshAccountList: () => void;
   refreshAccountRt: (accountId: string) => void;
   resetAccountQuota: (accountId: string) => void;
+  queryAccountResetCredits: (accountId: string) => void;
   importByFile: () => void;
   importByDirectory: () => void;
   refreshAccount: (accountId: string) => void;
@@ -257,10 +262,12 @@ export function AccountsPageView(props: AccountsPageViewProps) {
     modelWhitelistDraft,
     quotaPrimaryDraft,
     quotaSecondaryDraft,
+    weeklyQuotaDraft,
     isRefreshingAllAccounts,
     isRefreshingAccountId,
     isRefreshingRtAccountId,
     isResettingQuotaAccountId,
+    isQueryingResetCreditsAccountId,
     isRefreshingAllRtAccounts,
     isExporting,
     isWarmingUpAccounts,
@@ -288,6 +295,7 @@ export function AccountsPageView(props: AccountsPageViewProps) {
     setModelWhitelistDraft,
     setQuotaPrimaryDraft,
     setQuotaSecondaryDraft,
+    setWeeklyQuotaDraft,
     setPage,
     handleSearchChange,
     handlePlanFilterChange,
@@ -315,6 +323,7 @@ export function AccountsPageView(props: AccountsPageViewProps) {
     refreshAccountList,
     refreshAccountRt,
     resetAccountQuota,
+    queryAccountResetCredits,
     importByFile,
     importByDirectory,
     refreshAccount,
@@ -398,32 +407,9 @@ export function AccountsPageView(props: AccountsPageViewProps) {
           <div className="hidden min-w-0 lg:block" />
 
           <div className="ml-auto flex shrink-0 items-center gap-2 lg:ml-0 lg:justify-self-end">
-            <Tooltip>
-              <TooltipTrigger render={<span />} className="inline-flex">
-                <Button
-                  variant="outline"
-                  className="glass-card h-10 min-w-[88px] gap-2 rounded-xl px-3"
-                  disabled={
-                    !isServiceReady || isWarmingUpAccounts || accounts.length === 0
-                  }
-                  onClick={() => void handleWarmupAccounts()}
-                >
-                  {isWarmingUpAccounts ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Zap className="h-4 w-4" />
-                  )}
-                  <span className="text-sm font-medium">
-                    {isWarmingUpAccounts ? t("预热中...") : t("预热")}
-                  </span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs whitespace-pre-wrap break-words">
-                {t(
-                  "向选中账号发送 hi 进行预热；如果未选中账号，则默认预热全部账号。",
-                )}
-              </TooltipContent>
-            </Tooltip>
+            <WarmupControls accounts={accounts} selectedIds={effectiveSelectedIds}
+              ready={isServiceReady} warming={isWarmingUpAccounts}
+              onImmediate={() => void handleWarmupAccounts()} />
             <DropdownMenu>
               <DropdownMenuTrigger>
                 <Button
@@ -841,12 +827,11 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                     isRefreshingRtAccountId === account.id;
                   const isResettingCurrentQuota =
                     isResettingQuotaAccountId === account.id;
+                  const isQueryingCurrentResetCredits =
+                    isQueryingResetCreditsAccountId === account.id;
                   const quotaResetAvailableCount =
                     account.quotaResetAvailableCount;
-                  const quotaResetCountText =
-                    quotaResetAvailableCount == null
-                      ? "--"
-                      : String(quotaResetAvailableCount);
+                  const quotaResetCountText = String(quotaResetAvailableCount ?? "--");
                   const canResetQuota =
                     (quotaResetAvailableCount ?? 0) > 0;
                   const filteredIndex =
@@ -881,15 +866,12 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                             <RefreshCw className={cn("h-3 w-3", isRefreshingCurrentAccount && "animate-spin")} />
                             {t("刷新")}
                           </button>
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-1 text-primary hover:underline disabled:opacity-50"
-                            disabled={!isServiceReady || isRefreshingCurrentAccount}
-                            onClick={() => refreshAccount(account.id)}
-                          >
-                            <History className={cn("h-3 w-3", isRefreshingCurrentAccount && "animate-pulse")} />
-                            {t("次数")} {quotaResetCountText}
-                          </button>
+                          <ResetCreditsButton
+                            account={account}
+                            disabled={!isServiceReady}
+                            loading={isQueryingCurrentResetCredits}
+                            onQuery={() => queryAccountResetCredits(account.id)}
+                          />
                           <button
                             type="button"
                             className="inline-flex items-center gap-1 text-orange-500 hover:underline disabled:no-underline disabled:opacity-45"
@@ -1315,6 +1297,24 @@ export function AccountsPageView(props: AccountsPageViewProps) {
                   placeholder={t("留空使用计划模板")}
                 />
               </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="account-weekly-quota-input">
+                {t("周额度上限（Token）")}
+              </Label>
+              <Input
+                id="account-weekly-quota-input"
+                type="number"
+                min={1}
+                step={1}
+                value={weeklyQuotaDraft}
+                disabled={Boolean(isUpdatingProfileAccountId)}
+                onChange={(event) => setWeeklyQuotaDraft(event.target.value)}
+                placeholder={t("留空表示不限制")}
+              />
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                {t("本周窗口内累计用量达到上限后，该账号会被自动限流停用；周窗口重置后自动恢复。")}
+              </p>
             </div>
             <div className="grid gap-3 rounded-xl bg-muted/20 px-3 py-3 text-[11px] text-muted-foreground sm:grid-cols-2">
               <div className="space-y-1">

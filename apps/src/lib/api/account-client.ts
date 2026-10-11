@@ -102,6 +102,7 @@ interface AccountUpdatePayload {
   modelSlugs?: string[] | null;
   quotaCapacityPrimaryWindowTokens?: number | null;
   quotaCapacitySecondaryWindowTokens?: number | null;
+  weeklyQuotaLimitTokens?: number | null;
 }
 
 interface ChatgptAuthTokensLoginPayload {
@@ -400,6 +401,10 @@ export const accountClient = {
           typeof params.quotaCapacitySecondaryWindowTokens === "number"
             ? params.quotaCapacitySecondaryWindowTokens
             : null,
+        weeklyQuotaLimitTokens:
+          typeof params.weeklyQuotaLimitTokens === "number"
+            ? params.weeklyQuotaLimitTokens
+            : null,
       })
     ),
   setPreferred: (accountId: string) =>
@@ -495,6 +500,22 @@ export const accountClient = {
       "service_usage_quota_reset",
       withAddr({ accountId: targetAccountId, account_id: targetAccountId })
     );
+  },
+  async queryResetCredits(accountId: string): Promise<number | null> {
+    const targetAccountId = accountId.trim();
+    const result = await invoke<unknown>(
+      "service_usage_reset_credits",
+      withAddr({ accountId: targetAccountId, account_id: targetAccountId })
+    );
+    const payload =
+      result && typeof result === "object"
+        ? (result as { availableCount?: unknown })
+        : null;
+    // 后端在上游未提供重置次数信息时返回 null，需与「次数为 0」区分开。
+    const raw = payload?.availableCount;
+    return typeof raw === "number" && Number.isFinite(raw)
+      ? Math.max(0, Math.trunc(raw))
+      : null;
   },
   async aggregateUsage(): Promise<UsageAggregateSummary> {
     const result = await invoke<unknown>("service_usage_aggregate", withAddr());

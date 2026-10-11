@@ -630,6 +630,10 @@ pub(crate) fn write_request_log_with_attempts(
         }
     }
 
+    if let Some(account_id) = account_id {
+        let _ = crate::account_weekly_quota::enforce_weekly_quota_for_account(storage, account_id);
+    }
+
     if let Err(err) = storage.maybe_run_observability_maintenance(created_at) {
         let err_text = err.to_string();
         super::metrics::record_db_error(err_text.as_str());

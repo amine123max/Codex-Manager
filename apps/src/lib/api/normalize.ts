@@ -76,6 +76,10 @@ const DEFAULT_BACKGROUND_TASKS: BackgroundTaskSettings = {
   httpStreamWorkerMin: 2,
   warmupCronEnabled: false,
   warmupCronExpression: "",
+  warmupCronAccountIds: [],
+  warmupIntervalSecs: 0,
+  warmupRepeat: false,
+  warmupNextRunAt: 0,
 };
 
 const DEFAULT_QUOTA_GUARD: QuotaGuardSettings = {
@@ -450,6 +454,9 @@ export function normalizeAccount(item: unknown, usage?: AccountUsage | null): Ac
     quotaCapacitySecondaryWindowTokens: toNullableNumber(
       source.quotaCapacitySecondaryWindowTokens ??
         source.quota_capacity_secondary_window_tokens
+    ),
+    weeklyQuotaLimitTokens: toNullableNumber(
+      source.weeklyQuotaLimitTokens ?? source.weekly_quota_limit_tokens
     ),
     quotaResetAvailableCount:
       quotaResetAvailableCount == null
@@ -1700,6 +1707,12 @@ export function normalizeBackgroundTasks(payload: unknown): BackgroundTaskSettin
       source.warmupCronExpression,
       DEFAULT_BACKGROUND_TASKS.warmupCronExpression
     ),
+    warmupCronAccountIds: asArray(source.warmupCronAccountIds)
+      .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      .map((id) => id.trim()),
+    warmupIntervalSecs: asInteger(source.warmupIntervalSecs, 0, 0),
+    warmupRepeat: asBoolean(source.warmupRepeat, false),
+    warmupNextRunAt: asInteger(source.warmupNextRunAt, 0, 0),
     usageRefreshWorkers: asInteger(
       source.usageRefreshWorkers,
       DEFAULT_BACKGROUND_TASKS.usageRefreshWorkers,

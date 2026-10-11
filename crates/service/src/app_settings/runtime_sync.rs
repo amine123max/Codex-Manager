@@ -1,11 +1,9 @@
 use crate::gateway;
-use crate::usage_refresh;
 
 use super::{
     apply_env_overrides_to_process, list_app_settings_map, normalize_optional_text,
     persisted_env_overrides_missing_process_env, reload_runtime_after_env_override_apply,
-    set_service_bind_mode, BackgroundTasksInput, QuotaGuardInput,
-    APP_SETTING_GATEWAY_ACCOUNT_MAX_INFLIGHT_KEY, APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY,
+    set_service_bind_mode, QuotaGuardInput, APP_SETTING_GATEWAY_ACCOUNT_MAX_INFLIGHT_KEY,
     APP_SETTING_GATEWAY_COMPACT_MODEL_FORWARD_RULES_KEY,
     APP_SETTING_GATEWAY_FREE_ACCOUNT_MAX_MODEL_KEY, APP_SETTING_GATEWAY_MODEL_FORWARD_RULES_KEY,
     APP_SETTING_GATEWAY_ORIGINATOR_KEY, APP_SETTING_GATEWAY_QUOTA_GUARD_KEY,
@@ -210,22 +208,6 @@ pub fn sync_runtime_settings_from_storage() {
         "CODEXMANAGER_HTTP_STREAM_WORKER_FACTOR",
         "CODEXMANAGER_HTTP_STREAM_WORKER_MIN",
     ]) {
-        if let Some(raw) = settings.get(APP_SETTING_GATEWAY_BACKGROUND_TASKS_KEY) {
-            match serde_json::from_str::<BackgroundTasksInput>(raw) {
-                Ok(input) => {
-                    let patch = input.into_patch();
-                    if let Err(err) =
-                        usage_refresh::validate_background_tasks_settings_patch(&patch)
-                    {
-                        log::warn!("sync persisted background tasks failed: {err}");
-                    } else {
-                        usage_refresh::set_background_tasks_settings(patch);
-                    }
-                }
-                Err(err) => {
-                    log::warn!("parse persisted background tasks failed: {err}");
-                }
-            }
-        }
+        super::gateway::sync_background_tasks_from_storage();
     }
 }

@@ -56,6 +56,8 @@ static HTTP_STREAM_WORKER_FACTOR: AtomicUsize = AtomicUsize::new(DEFAULT_HTTP_ST
 static HTTP_STREAM_WORKER_MIN: AtomicUsize = AtomicUsize::new(DEFAULT_HTTP_STREAM_WORKER_MIN);
 static WARMUP_CRON_ENABLED: AtomicBool = AtomicBool::new(false);
 static WARMUP_CRON_EXPRESSION: OnceLock<Mutex<String>> = OnceLock::new();
+static WARMUP_CRON_ACCOUNT_IDS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+static WARMUP_INTERVAL: OnceLock<Mutex<settings::WarmupIntervalSettings>> = OnceLock::new();
 
 const ENV_DISABLE_POLLING: &str = "CODEXMANAGER_DISABLE_POLLING";
 const ENV_USAGE_POLLING_ENABLED: &str = "CODEXMANAGER_USAGE_POLLING_ENABLED";
@@ -514,6 +516,147 @@ pub(crate) fn reset_usage_quota_for_account(account_id: &str) -> Result<(), Stri
     let workspace_id = account.as_ref().and_then(workspace_header_for_account);
 
     consume_rate_limit_reset_for_token(&storage, &token, workspace_id.as_deref())
+}
+
+/// 查询账号剩余的额度重置次数（不消费重置额度，也不触发状态联动）。
+///
+/// 对标 sub2api 的语义：「刷新」刷新额度用量，「次数」只请求重置次数信息。
+/// 拉取到的完整快照会落库，让账号列表的次数与用量展示保持最新。
+/// 上游未返回重置次数信息时返回 None（区别于「次数为 0」）。
+pub(crate) fn query_rate_limit_reset_credits_for_account(
+    account_id: &str,
+) -> Result<Option<i64>, String> {
+    let normalized_account_id = account_id.trim();
+    if normalized_account_id.is_empty() {
+        return Err("account_id is required".to_string());
+    }
+    let storage = open_storage().ok_or_else(|| "storage unavailable".to_string())?;
+    let token = storage
+        .find_token_by_account_id(normalized_account_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "account token not found".to_string())?;
+    let account = storage
+        .find_account_by_id(normalized_account_id)
+        .map_err(|e| e.to_string())?;
+    let workspace_id = account.as_ref().and_then(workspace_header_for_account);
+
+    let issuer =
+        std::env::var("CODEXMANAGER_ISSUER").unwrap_or_else(|_| DEFAULT_ISSUER.to_string());
+    let client_id =
+        std::env::var("CODEXMANAGER_CLIENT_ID").unwrap_or_else(|_| DEFAULT_CLIENT_ID.to_string());
+    let base_url = std::env::var("CODEXMANAGER_USAGE_BASE_URL")
+        .unwrap_or_else(|_| "https://chatgpt.com".to_string());
+
+    let mut current = token;
+    let mut resolved_workspace_id = workspace_id;
+    let (derived_chatgpt_id, derived_workspace_id) = derive_account_meta(&current);
+    if resolved_workspace_id.is_none() {
+        resolved_workspace_id = derived_workspace_id.or_else(|| derived_chatgpt_id.clone());
+    }
+    let mut active_workspace_id = clean_header_value(resolved_workspace_id);
+    let mut authorization = crate::agent_identity::resolve_chatgpt_authorization_context(
+        &storage,
+        &current.account_id,
+        &current,
+    )?;
+
+    let mut value = match fetch_usage_snapshot_with_agent_recovery(
+        &storage,
+        &current.account_id,
+        &base_url,
+        &mut authorization,
+        active_workspace_id.as_deref(),
+    ) {
+        Ok(value) => value,
+        Err(err) if should_retry_usage_refresh_with_token(&current, &err) => {
+            refresh_and_persist_access_token(
+                &storage,
+                &mut current,
+                &issuer,
+                &client_id,
+                token_refresh_ahead_secs(),
+            )?;
+            let (refreshed_chatgpt_id, refreshed_workspace_id) = derive_account_meta(&current);
+            active_workspace_id = clean_header_value(
+                refreshed_workspace_id.or_else(|| refreshed_chatgpt_id.clone()),
+            );
+            authorization = crate::agent_identity::resolve_chatgpt_authorization_context(
+                &storage,
+                &current.account_id,
+                &current,
+            )?;
+            fetch_usage_snapshot_with_agent_recovery(
+                &storage,
+                &current.account_id,
+                &base_url,
+                &mut authorization,
+                active_workspace_id.as_deref(),
+            )?
+        }
+        Err(err) => return Err(err),
+    };
+
+    // /wham/usage usually exposes only the count. The separate GET endpoint
+    // supplies each reset card's expiry; querying it never consumes a card.
+    if value.pointer("/rate_limit_reset_credits/credits").is_none() {
+        if let Ok(details) = crate::usage_http::fetch_rate_limit_reset_credit_details(
+            &base_url, &authorization.credential, active_workspace_id.as_deref(),
+        ) {
+            crate::usage::reset_credits::merge_reset_credit_details(&mut value, &details);
+        }
+    }
+    let parsed = parse_usage_snapshot(&value);
+    let available_count = parse_reset_credits_available_count(parsed.credits_json.as_deref());
+    // 把刚拉取的完整快照落库，保持列表展示与低额度守卫的数据新鲜；
+    // 但不走 store_usage_snapshot 的状态联动，保持「仅查询次数」的语义。
+    let record = codexmanager_core::storage::UsageSnapshotRecord {
+        account_id: current.account_id.clone(),
+        used_percent: parsed.used_percent,
+        window_minutes: parsed.window_minutes,
+        resets_at: parsed.resets_at,
+        secondary_used_percent: parsed.secondary_used_percent,
+        secondary_window_minutes: parsed.secondary_window_minutes,
+        secondary_resets_at: parsed.secondary_resets_at,
+        credits_json: parsed.credits_json,
+        captured_at: now_ts(),
+    };
+    storage.insert_usage_snapshot(&record).map_err(|err| format!("store reset credit snapshot failed: {err}"))?;
+    let retain = crate::usage_snapshot_store::usage_snapshots_retain_per_account();
+    if retain > 0 {
+        let _ = storage.prune_usage_snapshots_for_account(&current.account_id, retain);
+    }
+
+    Ok(available_count)
+}
+
+fn parse_reset_credits_available_count(credits_json: Option<&str>) -> Option<i64> {
+    let raw = credits_json?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    [
+        "/rate_limit_reset_credits/available_count",
+        "/rate_limit_reset_credits/availableCount",
+        "/rateLimitResetCredits/available_count",
+        "/rateLimitResetCredits/availableCount",
+        "/available_count",
+        "/availableCount",
+    ]
+    .into_iter()
+    .filter_map(|path| value.pointer(path))
+    .find_map(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+            .or_else(|| {
+                value
+                    .as_f64()
+                    .filter(|v| v.is_finite())
+                    .map(|v| v.trunc() as i64)
+            })
+            .map(|v| v.max(0))
+    })
 }
 
 fn consume_rate_limit_reset_for_token(

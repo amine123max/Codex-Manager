@@ -25,6 +25,10 @@ export interface BackgroundTaskSettings {
   httpStreamWorkerMin: number;
   warmupCronEnabled: boolean;
   warmupCronExpression: string;
+  warmupCronAccountIds: string[];
+  warmupIntervalSecs: number;
+  warmupRepeat: boolean;
+  warmupNextRunAt: number;
 }
 
 export interface QuotaGuardSettings {

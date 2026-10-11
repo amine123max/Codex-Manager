@@ -102,3 +102,23 @@ pub async fn service_usage_quota_reset(
     )
     .await
 }
+
+/// 函数 `service_usage_reset_credits`
+///
+/// 查询账号剩余的额度重置次数（不消费重置额度）。
+#[tauri::command]
+pub async fn service_usage_reset_credits(
+    addr: Option<String>,
+    account_id: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let account_id = account_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "accountId is required".to_string())?;
+    rpc_call_in_background(
+        "account/usage/resetCredits",
+        addr,
+        Some(serde_json::json!({ "accountId": account_id })),
+    )
+    .await
+}

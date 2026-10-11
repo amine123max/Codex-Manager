@@ -3,6 +3,7 @@ import {
   AccountManagerStatus,
   ApiKeyOwner,
   AppSettings,
+  BackgroundTaskSettings,
   AppSessionResult,
   AppRole,
   AppPermission,
@@ -197,12 +198,16 @@ function readAppSession(value: unknown): AppSessionResult {
   };
 }
 
+export type AppSettingsPatch = Omit<Partial<AppSettings>, "backgroundTasks"> & {
+  backgroundTasks?: Partial<BackgroundTaskSettings>;
+};
+
 export const appClient = {
   async getSettings(): Promise<AppSettings> {
     const result = await invoke<unknown>("app_settings_get");
     return normalizeAppSettings(result);
   },
-  async setSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+  async setSettings(patch: AppSettingsPatch): Promise<AppSettings> {
     const result = await invoke<unknown>("app_settings_set", { patch });
     return normalizeAppSettings(result);
   },

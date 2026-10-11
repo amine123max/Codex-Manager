@@ -5,6 +5,14 @@ It follows Keep a Changelog with a lightweight adaptation for this repository.
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-10-11
+
+### Added
+- Added immediate/scheduled warmup actions. Schedules target selected accounts, support fractional-hour delays, one-shot or repeating execution and cancellation, and persist the next run across service restarts.
+- Added reset-credit hover/focus details showing individual expiration dates, following sub2api.
+- Fetch expiry metadata from the read-only reset-credit endpoint, with explicit unknown, partial and expired-data states. Queries do not consume credits.
+- Released Windows 0.4.8 installers and standalone executable.
+
 ## [0.3.8] - 2026-05-30
 
 ### Fixed

@@ -49,6 +49,7 @@ export default function AccountsPage() {
     refreshAccount,
     refreshAccountRt,
     resetAccountQuota,
+    queryAccountResetCredits,
     refreshAllAccountRt,
     refreshAllAccounts,
     refreshAccountList,
@@ -65,6 +66,7 @@ export default function AccountsPage() {
     isWarmingUpAccounts,
     isRefreshingRtAccountId,
     isResettingQuotaAccountId,
+    isQueryingResetCreditsAccountId,
     isRefreshingAllRtAccounts,
     isDeletingMany,
     isCleaningAccountsByStatus,
@@ -101,6 +103,7 @@ export default function AccountsPage() {
   const [modelWhitelistDraft, setModelWhitelistDraft] = useState("");
   const [quotaPrimaryDraft, setQuotaPrimaryDraft] = useState("");
   const [quotaSecondaryDraft, setQuotaSecondaryDraft] = useState("");
+  const [weeklyQuotaDraft, setWeeklyQuotaDraft] = useState("");
   const [accountEditorState, setAccountEditorState] =
     useState<AccountEditorState | null>(null);
   const [deleteDialogState, setDeleteDialogState] =
@@ -431,6 +434,7 @@ const toggleCleanupStatus = (rawStatus: string) => {
       currentModelSlugs: account.modelSlugs.join(", "),
       currentQuotaPrimaryWindowTokens: account.quotaCapacityPrimaryWindowTokens,
       currentQuotaSecondaryWindowTokens: account.quotaCapacitySecondaryWindowTokens,
+      currentWeeklyQuotaLimitTokens: account.weeklyQuotaLimitTokens,
     });
     setLabelDraft(account.label);
     setTagsDraft(account.tags.join(", "));
@@ -446,6 +450,11 @@ const toggleCleanupStatus = (rawStatus: string) => {
       account.quotaCapacitySecondaryWindowTokens == null
         ? ""
         : String(account.quotaCapacitySecondaryWindowTokens),
+    );
+    setWeeklyQuotaDraft(
+      account.weeklyQuotaLimitTokens == null
+        ? ""
+        : String(account.weeklyQuotaLimitTokens),
     );
   };
 
@@ -534,14 +543,16 @@ const toggleCleanupStatus = (rawStatus: string) => {
     const parseOptionalTokenCapacity = (value: string) => {
       const trimmed = value.trim();
       if (!trimmed) return null;
-      const parsed = Number(trimmed);
+      // 先取整再校验，避免 0 < x < 1 的输入被截断成 0 后当成「清除上限」提交。
+      const parsed = Math.trunc(Number(trimmed));
       if (!Number.isFinite(parsed) || parsed <= 0) {
         return Number.NaN;
       }
-      return Math.trunc(parsed);
+      return parsed;
     };
     const nextPrimaryCapacity = parseOptionalTokenCapacity(quotaPrimaryDraft);
     const nextSecondaryCapacity = parseOptionalTokenCapacity(quotaSecondaryDraft);
+    const nextWeeklyQuotaLimit = parseOptionalTokenCapacity(weeklyQuotaDraft);
 
     if (!nextLabel) {
       toast.error(t("请输入账号名称"));
@@ -561,6 +572,10 @@ const toggleCleanupStatus = (rawStatus: string) => {
       toast.error(t("额度容量必须是大于 0 的数字，留空表示未覆盖"));
       return;
     }
+    if (Number.isNaN(nextWeeklyQuotaLimit)) {
+      toast.error(t("周额度上限必须是大于 0 的数字，留空表示不限制"));
+      return;
+    }
 
     const nextSort = Math.max(0, Math.trunc(parsed));
     if (
@@ -570,7 +585,8 @@ const toggleCleanupStatus = (rawStatus: string) => {
       nextSort === accountEditorState.currentSort &&
       nextModelSlugsText === accountEditorState.currentModelSlugs &&
       nextPrimaryCapacity === accountEditorState.currentQuotaPrimaryWindowTokens &&
-      nextSecondaryCapacity === accountEditorState.currentQuotaSecondaryWindowTokens
+      nextSecondaryCapacity === accountEditorState.currentQuotaSecondaryWindowTokens &&
+      nextWeeklyQuotaLimit === accountEditorState.currentWeeklyQuotaLimitTokens
     ) {
       setAccountEditorState(null);
       return;
@@ -585,6 +601,7 @@ const toggleCleanupStatus = (rawStatus: string) => {
         modelSlugs: nextModelSlugs,
         quotaCapacityPrimaryWindowTokens: nextPrimaryCapacity ?? 0,
         quotaCapacitySecondaryWindowTokens: nextSecondaryCapacity ?? 0,
+        weeklyQuotaLimitTokens: nextWeeklyQuotaLimit ?? 0,
       });
       setAccountEditorState(null);
     } catch {
@@ -641,10 +658,12 @@ const toggleCleanupStatus = (rawStatus: string) => {
       modelWhitelistDraft={modelWhitelistDraft}
       quotaPrimaryDraft={quotaPrimaryDraft}
       quotaSecondaryDraft={quotaSecondaryDraft}
+      weeklyQuotaDraft={weeklyQuotaDraft}
       isRefreshingAllAccounts={isRefreshingAllAccounts}
       isRefreshingAccountId={isRefreshingAccountId}
       isRefreshingRtAccountId={isRefreshingRtAccountId}
       isResettingQuotaAccountId={isResettingQuotaAccountId}
+      isQueryingResetCreditsAccountId={isQueryingResetCreditsAccountId}
       isRefreshingAllRtAccounts={isRefreshingAllRtAccounts}
       isExporting={isExporting}
       isWarmingUpAccounts={isWarmingUpAccounts}
@@ -672,6 +691,7 @@ const toggleCleanupStatus = (rawStatus: string) => {
       setModelWhitelistDraft={setModelWhitelistDraft}
       setQuotaPrimaryDraft={setQuotaPrimaryDraft}
       setQuotaSecondaryDraft={setQuotaSecondaryDraft}
+      setWeeklyQuotaDraft={setWeeklyQuotaDraft}
       setPage={setPage}
       handleSearchChange={handleSearchChange}
       handlePlanFilterChange={handlePlanFilterChange}
@@ -699,6 +719,7 @@ const toggleCleanupStatus = (rawStatus: string) => {
       refreshAccountList={refreshAccountList}
       refreshAccountRt={refreshAccountRt}
       resetAccountQuota={resetAccountQuota}
+      queryAccountResetCredits={queryAccountResetCredits}
       importByFile={importByFile}
       importByDirectory={importByDirectory}
       refreshAccount={refreshAccount}

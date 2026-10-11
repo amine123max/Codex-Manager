@@ -5,7 +5,10 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
-use super::settings::{current_mutex_string, warmup_cron_signal_version};
+use super::settings::{
+    current_mutex_string, current_warmup_cron_account_ids, current_warmup_interval,
+    warmup_cron_signal_version,
+};
 use super::{
     is_keepalive_error_ignorable, parse_interval_secs,
     refresh_tokens_before_expiry_for_all_accounts,
@@ -128,6 +131,39 @@ pub(super) fn warmup_cron_loop() {
         }
 
         let expression = current_mutex_string(&WARMUP_CRON_EXPRESSION);
+        let account_ids = current_warmup_cron_account_ids();
+        let interval = current_warmup_interval();
+        if interval.interval_secs > 0 {
+            let delay = Duration::from_millis(
+                (interval
+                    .next_run_at
+                    .saturating_sub(codexmanager_core::storage::now_ts())
+                    .max(0) as u64)
+                    .saturating_mul(1000)
+                    .max(1),
+            );
+            let (next_signal, timed_out) = wait_for_warmup_cron_change(signal_version, Some(delay));
+            signal_version = next_signal;
+            if !timed_out || !WARMUP_CRON_ENABLED.load(Ordering::Relaxed) {
+                continue;
+            }
+            match crate::app_settings::advance_warmup_interval(
+                interval.next_run_at,
+                interval.interval_secs,
+                interval.repeat,
+                &account_ids,
+            ) {
+                Ok(true) => run_scheduled_warmup(account_ids),
+                Ok(false) => {}
+                Err(err) => {
+                    log::warn!("persist scheduled warmup state failed: {err}");
+                    signal_version =
+                        wait_for_warmup_cron_change(signal_version, Some(Duration::from_secs(60)))
+                            .0;
+                }
+            }
+            continue;
+        }
         let next_run_at = match next_cron_after(expression.as_str(), Local::now()) {
             Ok(next_run_at) => next_run_at,
             Err(err) => {
@@ -156,19 +192,24 @@ pub(super) fn warmup_cron_loop() {
         }
         if !WARMUP_CRON_ENABLED.load(Ordering::Relaxed)
             || current_mutex_string(&WARMUP_CRON_EXPRESSION) != expression
+            || current_warmup_cron_account_ids() != account_ids
         {
             continue;
         }
 
-        match crate::account_warmup::warmup_accounts(Vec::new(), "") {
-            Ok(result) => log::info!(
-                "account warmup cron finished: requested={} succeeded={} failed={}",
-                result.requested,
-                result.succeeded,
-                result.failed
-            ),
-            Err(err) => log::warn!("account warmup cron error: {err}"),
-        }
+        run_scheduled_warmup(account_ids);
+    }
+}
+
+fn run_scheduled_warmup(account_ids: Vec<String>) {
+    match crate::account_warmup::warmup_accounts(account_ids, "") {
+        Ok(result) => log::info!(
+            "account warmup cron finished: requested={} succeeded={} failed={}",
+            result.requested,
+            result.succeeded,
+            result.failed
+        ),
+        Err(err) => log::warn!("account warmup cron error: {err}"),
     }
 }
 
