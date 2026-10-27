@@ -357,6 +357,7 @@ export function createWebCommandMap(
     service_quota_capacity_config: { rpcMethod: "quota/capacityConfig" },
     service_quota_billing_rules: { rpcMethod: "quota/billingRules" },
     service_quota_model_price_rules: { rpcMethod: "quota/modelPriceRules" },
+    service_quota_model_prices_sync_openai: { rpcMethod: "quota/modelPriceRules/syncOpenai" },
     service_quota_model_price_rule_upsert: {
       rpcMethod: "quota/modelPriceRule/upsert",
     },

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DollarSign, PencilLine, Plus, Trash2 } from "lucide-react";
+import { DollarSign, PencilLine, Plus, Trash2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { quotaClient } from "@/lib/api/quota-client";
 import { getAppErrorMessage } from "@/lib/api/transport";
 import { useI18n } from "@/lib/i18n/provider";
+import { formatTsFromSeconds } from "@/lib/utils/usage";
 import type { ModelPriceRule } from "@/types/quota";
 
 const emptyDraft = {
@@ -54,6 +55,14 @@ export function ModelPricingPanel({ enabled }: { enabled: boolean }) {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["quota"] }),
     onError: (error) => toast.error(getAppErrorMessage(error)),
   });
+  const sync = useMutation({
+    mutationFn: () => quotaClient.syncOpenaiPrices(),
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: ["quota"] });
+      toast.success(t("已同步 {count} 个 OpenAI 模型的官方价格", { count: result.modelCount }));
+    },
+    onError: (error) => toast.error(getAppErrorMessage(error)),
+  });
 
   const edit = (item?: ModelPriceRule) => {
     setDraft(item ? {
@@ -65,17 +74,31 @@ export function ModelPricingPanel({ enabled }: { enabled: boolean }) {
     setOpen(true);
   };
   const customRules = (query.data || []).filter((item) => item.source === "custom");
+  const synced = (query.data || []).filter((item) => item.source === "official_sync");
+  const lastSync = Math.max(0, ...synced.map(item => item.updatedAt ?? 0));
+  const officialRules = (query.data || []).filter(item => item.source !== "custom" && (!item.billingMode || item.billingMode === "standard"))
+    .filter(item => item.source === "official_sync" || !synced.some(rule => rule.modelPattern === item.modelPattern && rule.billingMode === "standard"));
 
   return (
     <Card className="glass-card shadow-sm">
-      <CardHeader className="flex flex-row items-center justify-between">
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <CardTitle className="flex items-center gap-2 text-base"><DollarSign className="h-4 w-4" />{t("模型计费价格")}</CardTitle>
           <p className="mt-1 text-xs text-muted-foreground">{t("按模型分别设置每百万 Token 的输入、缓存、输出和推理输出价格。")}</p>
         </div>
-        <Button size="sm" onClick={() => edit()}><Plus className="mr-1.5 h-4 w-4" />{t("新增价格")}</Button>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" disabled={!enabled || sync.isPending} onClick={() => sync.mutate()}>
+            <RefreshCw className={`mr-1.5 h-4 w-4 ${sync.isPending ? "animate-spin" : ""}`} />
+            {sync.isPending ? t("正在同步价格...") : t("同步 OpenAI 官价")}
+          </Button>
+          <Button size="sm" disabled={!enabled} onClick={() => edit()}><Plus className="mr-1.5 h-4 w-4" />{t("新增价格")}</Button>
+        </div>
       </CardHeader>
       <CardContent>
+        <p className="mb-3 text-xs text-muted-foreground">
+          {t("从 OpenAI 官网同步旗舰及通用文本模型的 Standard、Fast、Flex、Ultrafast 价格和长上下文阶梯；保留自定义价格，仅对新请求生效。")}
+          {lastSync > 0 ? <span className="ml-2">{t("最近同步")}: {formatTsFromSeconds(lastSync, "--")}</span> : null}
+        </p>
         {customRules.length ? (
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {customRules.map((item) => (
@@ -91,7 +114,21 @@ export function ModelPricingPanel({ enabled }: { enabled: boolean }) {
               </div>
             ))}
           </div>
-        ) : <p className="text-sm text-muted-foreground">{t("当前使用内置官价，可新增自定义模型价格覆盖。")}</p>}
+        ) : <p className="text-sm text-muted-foreground">{t("可新增自定义模型价格覆盖官方价格。")}</p>}
+        <details className="mt-4 rounded-md border p-3">
+          <summary className="cursor-pointer text-sm font-medium">{t("查看官方价格（{count} 个模型）", { count: officialRules.length })}</summary>
+          <p className="mt-2 text-xs text-muted-foreground">{t("表格显示 Standard 单价；服务等级和长上下文价格自动按同步规则计费。")}</p>
+          <div className="mt-3 max-h-80 overflow-auto">
+            <table className="w-full text-left text-xs tabular-nums">
+              <thead><tr><th className="p-2">{t("模型")}</th><th className="p-2">{t("输入 $/MTok")}</th><th className="p-2">{t("缓存输入 $/MTok")}</th><th className="p-2">{t("输出 $/MTok")}</th><th className="p-2">{t("来源")}</th></tr></thead>
+              <tbody>{officialRules.map(item => <tr key={item.id} className="border-t">
+                <td className="p-2">{item.modelPattern}</td><td className="p-2">{item.inputPricePer1m ?? "--"}</td>
+                <td className="p-2">{item.cachedInputPricePer1m ?? "--"}</td><td className="p-2">{item.outputPricePer1m ?? "--"}</td>
+                <td className="p-2">{item.source === "official_sync" ? t("官网同步") : t("内置")}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+        </details>
       </CardContent>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-xl">

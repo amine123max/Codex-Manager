@@ -1,8 +1,42 @@
-use rusqlite::{params, Result};
+use rusqlite::{params, OptionalExtension, Result};
 
 use super::{ModelPriceRule, Storage};
 
 impl Storage {
+    /// Replace only the downloaded OpenAI snapshot, atomically. Built-in and custom rules survive.
+    pub fn replace_synced_openai_price_rules(&self, rules: &[ModelPriceRule]) -> Result<()> {
+        if rules.is_empty()
+            || rules
+                .iter()
+                .any(|rule| rule.source != "official_sync" || rule.provider != "openai")
+        {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "invalid OpenAI price snapshot".into(),
+            ));
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM model_price_rules WHERE source = 'official_sync' AND provider = 'openai'",
+            [],
+        )?;
+        for rule in rules {
+            let existing_source: Option<String> = tx
+                .query_row(
+                    "SELECT source FROM model_price_rules WHERE id = ?1",
+                    [&rule.id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if existing_source.is_some() {
+                return Err(rusqlite::Error::InvalidParameterName(
+                    "price rule ID collision".into(),
+                ));
+            }
+            self.upsert_model_price_rule(rule)?;
+        }
+        tx.commit()
+    }
+
     pub fn list_model_price_rules(&self) -> Result<Vec<ModelPriceRule>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, provider, model_pattern, match_type, billing_mode,

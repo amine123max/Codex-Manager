@@ -4,6 +4,7 @@ import type {
   BillingRuleUpsertParams,
   ModelPriceRule,
   ModelPriceRuleUpsertParams,
+  OfficialPriceSyncResult,
   QuotaApiKeyModelUsageItem,
   QuotaApiKeyUsageItem,
   QuotaCapacityConfigResult,
@@ -182,6 +183,13 @@ function normalizeModelPriceRule(payload: unknown): ModelPriceRule {
   const source = asRecord(payload);
   return {
     id: asString(source.id),
+    billingMode: asString(source.billingMode) || "standard",
+    sourceUrl: asString(source.sourceUrl) || null,
+    updatedAt: toNullableNumber(source.updatedAt) ?? 0,
+    longContextThresholdTokens: toNullableNumber(source.longContextThresholdTokens),
+    longContextInputPricePer1m: toNullableNumber(source.longContextInputPricePer1m),
+    longContextCachedInputPricePer1m: toNullableNumber(source.longContextCachedInputPricePer1m),
+    longContextOutputPricePer1m: toNullableNumber(source.longContextOutputPricePer1m),
     provider: asString(source.provider) || "custom",
     modelPattern: asString(source.modelPattern ?? source.model_pattern),
     matchType: asString(source.matchType ?? source.match_type) || "prefix",
@@ -489,6 +497,15 @@ export const quotaClient = {
   async modelPriceRules(): Promise<ModelPriceRule[]> {
     const result = await invoke<unknown>("service_quota_model_price_rules", withAddr());
     return readItems(result).map(normalizeModelPriceRule);
+  },
+  async syncOpenaiPrices(): Promise<OfficialPriceSyncResult> {
+    const result = asRecord(await invoke<unknown>("service_quota_model_prices_sync_openai", withAddr(), { timeoutMs: 45_000, retries: 0 }));
+    return {
+      modelCount: toNullableNumber(result.modelCount) ?? 0,
+      ruleCount: toNullableNumber(result.ruleCount) ?? 0,
+      syncedAt: toNullableNumber(result.syncedAt) ?? 0,
+      sourceUrl: asString(result.sourceUrl),
+    };
   },
   async upsertModelPriceRule(params: ModelPriceRuleUpsertParams): Promise<ModelPriceRule[]> {
     const result = await invoke<unknown>(

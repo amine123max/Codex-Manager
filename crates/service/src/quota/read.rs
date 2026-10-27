@@ -67,6 +67,7 @@ pub(crate) struct ModelPriceRuleResult {
     provider: String,
     model_pattern: String,
     match_type: String,
+    billing_mode: String,
     input_price_per_1m: Option<f64>,
     cached_input_price_per_1m: Option<f64>,
     output_price_per_1m: Option<f64>,
@@ -74,6 +75,12 @@ pub(crate) struct ModelPriceRuleResult {
     source: String,
     enabled: bool,
     priority: i64,
+    source_url: Option<String>,
+    updated_at: i64,
+    long_context_threshold_tokens: Option<i64>,
+    long_context_input_price_per_1m: Option<f64>,
+    long_context_cached_input_price_per_1m: Option<f64>,
+    long_context_output_price_per_1m: Option<f64>,
 }
 
 fn model_price_rule_result(rule: ModelPriceRule) -> ModelPriceRuleResult {
@@ -82,6 +89,7 @@ fn model_price_rule_result(rule: ModelPriceRule) -> ModelPriceRuleResult {
         provider: rule.provider,
         model_pattern: rule.model_pattern,
         match_type: rule.match_type,
+        billing_mode: rule.billing_mode,
         input_price_per_1m: rule.input_price_per_1m,
         cached_input_price_per_1m: rule.cached_input_price_per_1m,
         output_price_per_1m: rule.output_price_per_1m,
@@ -89,6 +97,12 @@ fn model_price_rule_result(rule: ModelPriceRule) -> ModelPriceRuleResult {
         source: rule.source,
         enabled: rule.enabled,
         priority: rule.priority,
+        source_url: rule.source_url,
+        updated_at: rule.updated_at,
+        long_context_threshold_tokens: rule.long_context_threshold_tokens,
+        long_context_input_price_per_1m: rule.long_context_input_price_per_1m,
+        long_context_cached_input_price_per_1m: rule.long_context_cached_input_price_per_1m,
+        long_context_output_price_per_1m: rule.long_context_output_price_per_1m,
     }
 }
 

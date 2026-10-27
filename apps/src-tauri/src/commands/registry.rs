@@ -57,6 +57,7 @@ macro_rules! invoke_handler {
             crate::commands::quota::service_quota_capacity_config,
             crate::commands::quota::service_quota_billing_rules,
             crate::commands::quota::service_quota_model_price_rules,
+            crate::commands::quota::service_quota_model_prices_sync_openai,
             crate::commands::quota::service_quota_model_price_rule_upsert,
             crate::commands::quota::service_quota_model_price_rule_delete,
             crate::commands::quota::service_quota_billing_rule_upsert,

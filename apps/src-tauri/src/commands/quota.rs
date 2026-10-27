@@ -76,6 +76,13 @@ pub async fn service_quota_model_price_rules(
 }
 
 #[tauri::command]
+pub async fn service_quota_model_prices_sync_openai(
+    addr: Option<String>,
+) -> Result<serde_json::Value, String> {
+    rpc_call_in_background("quota/modelPriceRules/syncOpenai", addr, None).await
+}
+
+#[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn service_quota_model_price_rule_upsert(
     addr: Option<String>,

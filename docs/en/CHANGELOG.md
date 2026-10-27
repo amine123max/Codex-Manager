@@ -5,6 +5,14 @@ It follows Keep a Changelog with a lightweight adaptation for this repository.
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-10-27
+
+### Added
+- Added admin RPC `quota/modelPriceRules/syncOpenai` and a Sync OpenAI prices button in model management. Fetches flagship/general text Standard/Fast/Flex/Ultrafast and long-context rates from official Markdown, atomically updates prices, preserves custom and other-provider rules, and displays sync time and rates. Failures retain the previous snapshot.
+- Added [official GPT-6.1 Terra pricing](https://developers.openai.com/api/docs/models/gpt-6.1-terra): $1 input / $0.05 cached input / $5 output per million tokens; above 272,000 input tokens, $2 / $0.10 / $7.50 for the entire request. Fast / Priority uses 2x pricing; Flex uses 0.5x.
+- Support provider prefixes, dated names and underscore aliases. Upgrade database price seeds while preserving custom rules. New requests use the updated prices; historical usage is unchanged.
+- Released Windows 0.4.9 installer and standalone executable.
+
 ## [0.4.8] - 2026-10-11
 
 ### Added

@@ -76,6 +76,20 @@ export interface ModelPriceRule {
   source: string;
   enabled: boolean;
   priority: number;
+  billingMode?: string;
+  sourceUrl?: string | null;
+  updatedAt?: number;
+  longContextThresholdTokens?: number | null;
+  longContextInputPricePer1m?: number | null;
+  longContextCachedInputPricePer1m?: number | null;
+  longContextOutputPricePer1m?: number | null;
+}
+
+export interface OfficialPriceSyncResult {
+  modelCount: number;
+  ruleCount: number;
+  syncedAt: number;
+  sourceUrl: string;
 }
 
 export interface ModelPriceRuleUpsertParams {

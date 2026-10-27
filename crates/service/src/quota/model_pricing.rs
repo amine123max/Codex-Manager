@@ -1,6 +1,6 @@
 use codexmanager_core::storage::{now_ts, ModelPriceRule, Storage};
 
-pub(crate) const PRICE_SEED_VERSION: &str = "2026-09-30-openai-gpt61-sol";
+pub(crate) const PRICE_SEED_VERSION: &str = "2026-10-27-openai-gpt61-terra";
 
 #[derive(Debug, Clone, Copy)]
 struct PriceSeed {
@@ -37,6 +37,18 @@ const ANTHROPIC_PRICE_SOURCE: &str = "https://docs.claude.com/en/docs/about-clau
 const GEMINI_PRICE_SOURCE: &str = "https://ai.google.dev/gemini-api/docs/pricing";
 
 const PRICE_SEEDS: &[PriceSeed] = &[
+    PriceSeed {
+        provider: "openai",
+        model_pattern: "gpt-6.1-terra",
+        input_price_per_1m: 1.0,
+        cached_input_price_per_1m: Some(0.05),
+        output_price_per_1m: 5.0,
+        long_context_threshold_tokens: Some(272_000),
+        long_context_input_price_per_1m: Some(2.0),
+        long_context_cached_input_price_per_1m: Some(0.1),
+        long_context_output_price_per_1m: Some(7.5),
+        source_url: "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
+    },
     PriceSeed {
         provider: "openai",
         model_pattern: "gpt-6.1-sol",
@@ -546,6 +558,22 @@ fn rule_matches(rule: &ModelPriceRule, normalized_model: &str) -> bool {
     if pattern.is_empty() {
         return false;
     }
+    if rule.source == "official_sync" {
+        // Website rows identify specific models. Do not price a future version or
+        // Codex/Pro variant using a shorter, unrelated model row.
+        return normalized_model == pattern
+            || normalized_model
+                .strip_prefix(&format!("{pattern}-"))
+                .is_some_and(|suffix| {
+                    suffix.len() >= 10
+                        && suffix.as_bytes().get(4) == Some(&b'-')
+                        && suffix.as_bytes().get(7) == Some(&b'-')
+                        && suffix
+                            .chars()
+                            .enumerate()
+                            .all(|(i, c)| matches!(i, 4 | 7) || c.is_ascii_digit())
+                });
+    }
     match rule.match_type.trim().to_ascii_lowercase().as_str() {
         "exact" => normalized_model == pattern,
         "glob" | "wildcard" => wildcard_matches(&pattern, normalized_model),
@@ -593,9 +621,15 @@ fn canonical_model_for_pricing(model: &str) -> String {
 
 fn is_gpt6_model(model: &str) -> bool {
     let normalized = canonical_model_for_pricing(model);
-    ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
-        .iter()
-        .any(|family| normalized == *family || normalized.starts_with(&format!("{family}-")))
+    [
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-6.1-sol",
+        "gpt-6.1-terra",
+    ]
+    .iter()
+    .any(|family| normalized == *family || normalized.starts_with(&format!("{family}-")))
 }
 
 fn gpt6_service_tier_multiplier(model: &str, service_tier: Option<&str>) -> f64 {
@@ -633,6 +667,9 @@ fn price_from_rule(rule: &ModelPriceRule, input_tokens: i64) -> Option<ModelPric
         .long_context_threshold_tokens
         .is_some_and(|threshold| input_tokens > threshold)
     {
+        if rule.source == "official_sync" && rule.long_context_input_price_per_1m.is_none() {
+            return None;
+        }
         input = rule.long_context_input_price_per_1m.unwrap_or(input);
         cached = rule.long_context_cached_input_price_per_1m.unwrap_or(input);
         output = rule.long_context_output_price_per_1m.unwrap_or(output);
@@ -652,6 +689,25 @@ pub(crate) fn resolve_model_price_from_rules(
     model: &str,
     input_tokens: i64,
 ) -> Option<ModelPriceMatch> {
+    matching_price_rule(rules, model, None).and_then(|rule| price_from_rule(rule, input_tokens))
+}
+
+fn normalized_service_tier(service_tier: Option<&str>) -> &str {
+    match service_tier.map(str::trim).unwrap_or_default() {
+        tier if tier.eq_ignore_ascii_case("priority") || tier.eq_ignore_ascii_case("fast") => {
+            "fast"
+        }
+        tier if tier.eq_ignore_ascii_case("flex") => "flex",
+        tier if tier.eq_ignore_ascii_case("ultrafast") => "ultrafast",
+        _ => "standard",
+    }
+}
+
+fn matching_price_rule<'a>(
+    rules: &'a [ModelPriceRule],
+    model: &str,
+    service_tier: Option<&str>,
+) -> Option<&'a ModelPriceRule> {
     let raw = normalize_model_rule_candidate(model);
     if raw.is_empty() || raw == "unknown" {
         return None;
@@ -660,16 +716,26 @@ pub(crate) fn resolve_model_price_from_rules(
     let normalized = normalize_model_spelling(model);
     let canonical = canonical_model_for_pricing(model);
     let candidates = [raw.as_str(), normalized.as_str(), canonical.as_str()];
+    let tier = normalized_service_tier(service_tier);
     let matched = rules
         .iter()
         .filter(|rule| {
-            candidates
-                .iter()
-                .any(|candidate| rule_matches(rule, candidate))
+            (rule.billing_mode.is_empty()
+                || rule.billing_mode == "standard"
+                || rule.billing_mode == tier)
+                && candidates
+                    .iter()
+                    .any(|candidate| rule_matches(rule, candidate))
         })
-        .max_by_key(|rule| (rule.priority, rule.model_pattern.len() as i64))?;
+        .max_by_key(|rule| {
+            (
+                rule.priority,
+                rule.model_pattern.len() as i64,
+                rule.billing_mode == tier,
+            )
+        })?;
 
-    price_from_rule(matched, input_tokens)
+    Some(matched)
 }
 
 pub(crate) fn resolve_model_price(model: &str, input_tokens: i64) -> Option<ModelPriceMatch> {
@@ -815,9 +881,20 @@ pub(crate) fn estimate_cost_with_rules_and_reasoning_for_service_tier(
         };
     };
 
-    let Some(price) = resolve_model_price_from_rules(rules, model, input_tokens.max(0))
-        .or_else(|| resolve_model_price(model, input_tokens.max(0)))
-    else {
+    let matched = matching_price_rule(rules, model, service_tier);
+    let selected_price = matched.and_then(|rule| {
+        if rule.source == "official_sync"
+            && rule.billing_mode != normalized_service_tier(service_tier)
+        {
+            return None;
+        }
+        price_from_rule(rule, input_tokens.max(0))
+    });
+    let Some(price) = (if matched.is_some_and(|rule| rule.source == "official_sync") {
+        selected_price
+    } else {
+        selected_price.or_else(|| resolve_model_price(model, input_tokens.max(0)))
+    }) else {
         return CostEstimate {
             provider: None,
             cost_usd: None,
@@ -832,7 +909,12 @@ pub(crate) fn estimate_cost_with_rules_and_reasoning_for_service_tier(
         output_tokens,
         reasoning_output_tokens,
     );
-    let multiplier = gpt6_service_tier_multiplier(model, service_tier);
+    let multiplier = if matched.is_some_and(|rule| rule.source == "official_sync") {
+        // Downloaded prices are absolute per-tier prices, not multipliers of Standard.
+        1.0
+    } else {
+        gpt6_service_tier_multiplier(model, service_tier)
+    };
     if multiplier != 1.0 {
         estimate.cost_usd = estimate.cost_usd.map(|cost| (cost * multiplier).max(0.0));
     }
@@ -958,6 +1040,131 @@ mod tests {
         assert!(
             delta < 0.000_000_1,
             "expected {expected}, got {actual}, delta {delta}"
+        );
+    }
+
+    #[test]
+    fn gpt61_terra_prices_aliases_context_boundaries_and_tiers() {
+        for model in [
+            "gpt-6.1-terra",
+            "openai/gpt-6.1-terra",
+            "provider/gpt_6.1_terra",
+            " GPT-6.1-TERRA ",
+            "gpt-6.1-terra-2026-10-27",
+        ] {
+            for (tokens, input, cached, output) in
+                [(272_000, 1.0, 0.05, 5.0), (272_001, 2.0, 0.1, 7.5)]
+            {
+                let price = resolve_model_price(model, tokens).expect("Terra price");
+                assert_close(price.input_price_per_1m, input);
+                assert_close(price.cached_input_price_per_1m, cached);
+                assert_close(price.output_price_per_1m, output);
+                // Reasoning is already included in output_tokens and must not be charged twice.
+                let expected =
+                    ((tokens - 100_000) as f64 * input + 100_000.0 * cached + 10_000.0 * output)
+                        / 1_000_000.0;
+                for (tier, multiplier) in [
+                    (None, 1.0),
+                    (Some("default"), 1.0),
+                    (Some("fast"), 2.0),
+                    (Some(" PRIORITY "), 2.0),
+                    (Some("flex"), 0.5),
+                ] {
+                    let estimate = estimate_cost_with_rules_and_reasoning_for_service_tier(
+                        &[],
+                        Some(model),
+                        tokens,
+                        100_000,
+                        10_000,
+                        4_000,
+                        tier,
+                    );
+                    assert_eq!(estimate.price_status, "ok");
+                    assert_close(
+                        estimate.cost_usd.expect("priced cost"),
+                        expected * multiplier,
+                    );
+                }
+            }
+        }
+        let cached_only = estimate_cost(Some("gpt-6.1-terra"), 1_000, 1_000, 0);
+        assert_close(cached_only.cost_usd.unwrap(), 0.00005);
+    }
+
+    #[test]
+    fn gpt61_terra_seed_upgrade_preserves_custom_rules_and_prices_new_logs() {
+        let storage = Storage::open_in_memory().expect("open storage");
+        storage.init().expect("initialize storage");
+        let mut old = test_rule(
+            "official-old-sol",
+            "gpt-6.1-sol",
+            "prefix",
+            10_000,
+            2.0,
+            Some(0.1),
+            10.0,
+        );
+        old.source = "official_seed".into();
+        old.seed_version = Some("2026-09-30-openai-gpt61-sol".into());
+        storage.upsert_model_price_rule(&old).unwrap();
+        let mut custom = test_rule(
+            "custom-preserved",
+            "custom-model",
+            "exact",
+            20_000,
+            3.0,
+            Some(0.3),
+            6.0,
+        );
+        custom.source = "custom".into();
+        storage.upsert_model_price_rule(&custom).unwrap();
+
+        let rules = load_enabled_price_rules(&storage).expect("upgrade prices");
+        assert_eq!(
+            storage
+                .count_model_price_rules_for_seed("2026-09-30-openai-gpt61-sol")
+                .unwrap(),
+            0
+        );
+        assert!(rules.iter().any(|rule| rule.id == custom.id));
+        let terra = rules
+            .iter()
+            .find(|rule| rule.model_pattern == "gpt-6.1-terra")
+            .unwrap();
+        assert_eq!(terra.long_context_threshold_tokens, Some(272_000));
+        assert_eq!(
+            terra.source_url.as_deref(),
+            Some("https://developers.openai.com/api/docs/models/gpt-6.1-terra")
+        );
+        let long = resolve_model_price_from_rules(&rules, "openai/gpt-6.1-terra", 272_001).unwrap();
+        assert_close(long.input_price_per_1m, 2.0);
+        assert_close(long.cached_input_price_per_1m, 0.1);
+        assert_close(long.output_price_per_1m, 7.5);
+        // Same seeded path used by gateway logs and wallet billing.
+        for (tier, expected) in [
+            (None, 0.00331),
+            (Some("fast"), 0.00662),
+            (Some("flex"), 0.001655),
+        ] {
+            assert_close(
+                estimate_cost_usd_for_log(
+                    &storage,
+                    Some("gpt-6.1-terra"),
+                    Some(1_000),
+                    Some(200),
+                    Some(500),
+                    Some(100),
+                    tier,
+                ),
+                expected,
+            );
+        }
+        load_enabled_price_rules(&storage).expect("idempotent seeding");
+        assert_eq!(
+            storage
+                .count_model_price_rules_for_seed(PRICE_SEED_VERSION)
+                .unwrap() as usize,
+            PRICE_SEEDS.len()
         );
     }
 
@@ -1142,6 +1349,7 @@ mod tests {
     #[test]
     fn matches_gpt_6_sol_and_luna_prices_across_context_and_service_tiers() {
         let cases = [
+            ("gpt-6.1-terra", 1.0, 0.05, 5.0, 2.0, 0.1, 7.5),
             ("gpt-6.1-sol", 2.0, 0.1, 10.0, 4.0, 0.2, 15.0),
             ("gpt-6-sol", 2.0, 0.2, 10.0, 4.0, 0.4, 15.0),
             ("gpt-6-luna", 0.1, 0.01, 0.5, 0.2, 0.02, 0.75),
@@ -1204,6 +1412,7 @@ mod tests {
         let rules = load_enabled_price_rules(&storage).expect("seed and load prices");
 
         for (model, input, cached, output) in [
+            ("gpt-6.1-terra", 1.0_f64, 0.05_f64, 5.0_f64),
             ("gpt-6.1-sol", 2.0_f64, 0.1_f64, 10.0_f64),
             ("gpt-6-sol", 2.0_f64, 0.2_f64, 10.0_f64),
             ("gpt-6-luna", 0.1_f64, 0.01_f64, 0.5_f64),

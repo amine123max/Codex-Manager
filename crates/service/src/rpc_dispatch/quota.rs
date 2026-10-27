@@ -51,6 +51,9 @@ pub(super) fn try_handle(req: &JsonRpcRequest) -> Option<JsonRpcResponse> {
         "quota/capacityConfig" => super::value_or_error(read::read_quota_capacity_config()),
         "quota/billingRules" => super::value_or_error(read::read_billing_rules()),
         "quota/modelPriceRules" => super::value_or_error(read::read_model_price_rules()),
+        "quota/modelPriceRules/syncOpenai" => {
+            super::value_or_error(crate::quota::official_price_sync::sync_openai_prices())
+        }
         "quota/modelPriceRule/upsert" => {
             super::value_or_error(read::upsert_model_price_rule(ModelPriceRuleUpsertInput {
                 id: super::string_param(req, "id"),

@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-10-27
+
+### Added
+- 新增管理员接口 `quota/modelPriceRules/syncOpenai` 和模型管理页“同步 OpenAI 官价”按钮，从官网 Markdown 同步旗舰及通用文本模型的 Standard/Fast/Flex/Ultrafast 与长上下文价格。下载和解析完成后原子写入；保留自定义和其他提供商价格，失败不覆盖现价，展示最近同步时间和价格表。
+- 按 [OpenAI 官方定价](https://developers.openai.com/api/docs/models/gpt-6.1-terra) 添加 GPT-6.1 Terra：每百万 token 输入 $1、缓存输入 $0.05、输出 $5。输入超过 272,000 token 时，全请求分别按 $2 / $0.10 / $7.50 计费；Fast / Priority 为 2 倍，Flex 为半价。
+- 兼容供应商前缀、日期后缀和下划线模型名；升级价格种子后自动写入数据库，保留自定义规则。适用于新请求，不回算历史账单。
+- 发布 Windows 0.4.9 安装包和独立 exe。
+
 ## [0.4.8] - 2026-10-11
 
 ### Added
