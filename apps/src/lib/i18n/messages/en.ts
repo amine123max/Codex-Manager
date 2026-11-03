@@ -1547,4 +1547,9 @@ export const EN_MESSAGES: MessageCatalog = {
   "内置": "Built-in",
   "可新增自定义模型价格覆盖官方价格。": "Add custom model prices to override official prices.",
   "表格显示 Standard 单价；服务等级和长上下文价格自动按同步规则计费。": "The table shows Standard rates. Billing uses the synchronized service-tier and long-context prices.",
+  "延迟": "Latency",
+  "首字": "First token",
+  "总耗时": "Total time",
+  "输出 TPS": "Output TPS",
+  "输出 TPS = 输出 Token 数 ÷ 总耗时（秒），包含已计入输出的推理 Token。": "Output TPS = output tokens / total duration in seconds, including reasoning tokens already counted in output.",
 };

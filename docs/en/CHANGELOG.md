@@ -5,6 +5,11 @@ It follows Keep a Changelog with a lightweight adaptation for this repository.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-03
+
+### Changed
+- Replaced the request log Duration / First response column with Latency, showing first token, total time and output TPS with latency severity colors. TPS matches sub2api: full output tokens divided by full request duration. Unavailable, invalid or non-text throughput displays an em dash.
+
 ## [0.4.9] - 2026-10-27
 
 ### Added

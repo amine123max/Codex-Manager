@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/modals/confirm-dialog";
+import { RequestLatencyCell } from "@/components/logs/request-latency-cell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -244,26 +245,6 @@ function LogsPageSkeleton() {
       <Skeleton className="h-[420px] w-full rounded-xl" />
     </div>
   );
-}
-
-/**
- * 函数 `formatDuration`
- *
- * 作者: gaohongshun
- *
- * 时间: 2026-04-02
- *
- * # 参数
- * - value: 参数 value
- *
- * # 返回
- * 返回函数执行结果
- */
-function formatDuration(value: number | null): string {
-  if (value == null) return "-";
-  if (value >= 10_000) return `${Math.round(value / 1000)}s`;
-  if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.0$/, "")}s`;
-  return `${Math.round(value)}ms`;
 }
 
 /**
@@ -1997,8 +1978,8 @@ function LogsPageContent() {
                 <TableHead className="w-[92px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
                   {t("状态")}
                 </TableHead>
-                <TableHead className="w-[128px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
-                  {t("用时 / 首响")}
+                <TableHead className="w-[190px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+                  {t("延迟")}
                 </TableHead>
                 <TableHead className="w-[148px] px-4 text-[11px] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
                   {t("Token")}
@@ -2079,14 +2060,8 @@ function LogsPageContent() {
                     <TableCell className="px-4 py-3 align-top">
                       {getStatusBadge(resolveDisplayedStatusCode(log))}
                     </TableCell>
-                    <TableCell className="px-4 py-3 align-top font-mono">
-                      <span
-                        className="text-xs text-primary"
-                        title={t("首响表示从请求开始到首个上游响应片段的耗时")}
-                      >
-                        {formatDuration(log.durationMs)}/
-                        {formatDuration(log.firstResponseMs)}
-                      </span>
+                    <TableCell className="px-4 py-3 align-top">
+                      <RequestLatencyCell log={log} />
                     </TableCell>
                     <TableCell className="px-4 py-3 align-top">
                       <div className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">
